@@ -311,6 +311,12 @@ void Runtime::ApplyGlobalProperty(MaterialPropertyChange const& property, float 
       } else {
         enabled = std::get<bool>(property.value);
       }
+      // An animated keyword is applied every frame of its animation; only a
+      // change of state is worth a managed string and a keyword switch.
+      if (auto known = _currentGlobalKeywords.find(keyword);
+          known != _currentGlobalKeywords.end() && known->second == enabled) {
+        break;
+      }
       if (enabled) {
         UnityEngine::Shader::EnableKeyword(StringW(keyword));
       } else {

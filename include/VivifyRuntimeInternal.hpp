@@ -48,6 +48,12 @@ public:
   // Advances "Prepare Shaders Before Playing" (0.14.15): compiles a converted
   // bundle's shaders in the menu, a few materials a frame. Once a frame.
   void PollShaderWarmup();
+  // A command buffer for immediate execution (Graphics::ExecuteCommandBuffer),
+  // cleared and handed out again on every call. One shared buffer instead of a
+  // new one per blit per frame: every allocation was managed garbage, and the
+  // collections that follow are frame hitches (0.14.25). Fill it, execute it,
+  // and do not keep it.
+  UnityEngine::Rendering::CommandBuffer* ImmediateCommandBuffer();
   // Starts a background scan of a bundle for shaders that read the scene
   // depth texture, unless one ran for this version of the file.
   void ScanBundleForSceneDepth(std::string const& bundlePath);
@@ -275,7 +281,8 @@ private:
   void HandleSetCameraProperty(rapidjson::Value const& json);
   void CaptureMainCameraOriginals(UnityEngine::Camera* mainCam, UnityEngine::GameObject* mainCamGO);
   void RestoreMainCameraOriginals();
-  UnityEngine::Rendering::CommandBuffer* BuildMidRenderCommandBuffer(std::vector<ActiveBlitEffect> const& effects);
+  UnityEngine::Rendering::CommandBuffer* BuildMidRenderCommandBuffer(std::vector<ActiveBlitEffect> const& effects,
+                                                                     int bucket);
   bool EnsureMidRenderTextures();
   void ReleaseMidRenderTextures();
   UnityEngine::RenderTexture* EnsureCachedBlitTexture(UnityEngine::RenderTexture*& texture,
@@ -406,6 +413,10 @@ private:
   std::array<std::vector<ActiveBlitEffect>, kMidRenderOrderCount> _midEffects;
 
   std::vector<std::pair<int, SafePtr<UnityEngine::Rendering::CommandBuffer>>> _activeMidCommandBuffers;
+  // Reused buffers (see ImmediateCommandBuffer): one for immediate blits, one
+  // per mid-render bucket, which is attached to the camera for a frame at most.
+  SafePtr<UnityEngine::Rendering::CommandBuffer> _immediateCommandBuffer;
+  std::array<SafePtr<UnityEngine::Rendering::CommandBuffer>, kMidRenderOrderCount> _midCommandBufferPool;
   UnityEngine::Camera* _midCommandBufferCamera = nullptr;
 
   UnityEngine::RenderTextureDescriptor _cachedMainDescriptor{};

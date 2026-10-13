@@ -790,18 +790,68 @@ void EnsureConfigDefaults() {
 
 MOD_EXTERN_FUNC void setup(CModInfo *info) noexcept {
   *info = modInfo.to_c();
-  InstallVivifyFileLogSink();
-  getConfig().Load();
-  EnsureConfigDefaults();
+  try {
+    InstallVivifyFileLogSink();
+  } catch (...) {
+  }
+  // A config file another tool or a crash left unreadable must not take the
+  // game down at launch (setup is noexcept): Vivify starts from its defaults.
+  try {
+    getConfig().Load();
+  } catch (std::exception const& ex) {
+    PaperLogger.warn("Vivify: config could not be read ({}); using defaults", ex.what());
+    getConfig().config.SetObject();
+  } catch (...) {
+    getConfig().config.SetObject();
+  }
+  try {
+    EnsureConfigDefaults();
+  } catch (std::exception const& ex) {
+    PaperLogger.warn("Vivify: config defaults could not be written ({})", ex.what());
+  } catch (...) {
+  }
   // Note: gMultipassRenderingEnabled / gVivifyDebugLogging are intentionally NOT
   // reset here. EnsureConfigDefaults() above already loaded the saved values (or
   // wrote the defaults on first run); hardcoding them back to a fixed value here
   // would silently discard the player's saved settings-menu choice on every launch.
   PaperLogger.info("Vivify file logging active -> {}", kVivifyLogPath);
 }
+namespace {
+// Every other mod the loader started, in one line of the session log: the
+// first thing to know when Vivify misbehaves alongside something else (a
+// freeze in 0.14.22 turned out to be Adaptive Audio Latency and Custom
+// Models, found by turning mods off one at a time).
+void LogLoadedMods() {
+  CModResults results = modloader_get_loaded();
+  std::string list;
+  for (size_t i = 0; i < results.size; i++) {
+    auto const& info = results.array[i].info;
+    if (info.id == nullptr) continue;
+    if (!list.empty()) list += ", ";
+    list += info.id;
+    if (info.version != nullptr) list += std::string(" ") + info.version;
+  }
+  PaperLogger.info("Vivify: loaded mods ({}): {}", results.size, list.empty() ? "none reported" : list);
+  modloader_free_results(&results);
+}
+}
+
 MOD_EXTERN_FUNC void late_load() noexcept {
-  il2cpp_functions::Init();
-  custom_types::Register::AutoRegister();
-  RegisterModSettings();
-  Vivify::LateLoad();
+  // noexcept: anything escaping from here terminates the game at launch. A
+  // failure in Vivify's own start-up costs Vivify, not the game and every
+  // other mod with it.
+  try {
+    il2cpp_functions::Init();
+    custom_types::Register::AutoRegister();
+    RegisterModSettings();
+    Vivify::LateLoad();
+  } catch (std::exception const& ex) {
+    PaperLogger.error("Vivify late_load failed ({}); Vivify is not active this session", ex.what());
+  } catch (...) {
+    PaperLogger.error("Vivify late_load failed with a non-std exception; Vivify is not active this session");
+  }
+  try {
+    LogLoadedMods();
+  } catch (...) {
+  }
 }

@@ -345,7 +345,7 @@ void SecondaryCameraController::OnRenderImage(UnityEngine::RenderTexture* src, U
       // AssetBundle and so cannot be reused here; BuiltinRenderTextureType::Depth
       // names the same source and the default blit copies it without needing a
       // shader of our own.
-      auto* cb = UnityEngine::Rendering::CommandBuffer::New_ctor();
+      auto* cb = Runtime::Instance().ImmediateCommandBuffer();
       if (cb != nullptr) {
         UnityEngine::Rendering::RenderTargetIdentifier depthSource{};
         depthSource._ctor(UnityEngine::Rendering::BuiltinRenderTextureType::Depth);
@@ -354,8 +354,7 @@ void SecondaryCameraController::OnRenderImage(UnityEngine::RenderTexture* src, U
                 static_cast<UnityEngine::Texture*>(tex));
         cb->Blit(depthSource, depthTarget);
         UnityEngine::Graphics::ExecuteCommandBuffer(cb);
-        cb->ReleaseBuffer();
-        cb->Dispose();
+        cb->Clear();
       }
     }
   }

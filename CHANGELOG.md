@@ -11,6 +11,37 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+## [0.14.25] - 2026-10-13
+
+Requested as "0.14.24.1"; qpm and QuestPatcher only accept three-part
+versions, so it ships as 0.14.25. Every feature and setting is unchanged.
+
+### Changed
+- **Fewer frame hitches from garbage collection.** Every frame with a map
+  effect running, Vivify created a new command buffer for each blit (and one
+  per mid-render effect group, plus one per depth copy for map-created
+  cameras), then threw it away. That steady managed garbage is what the
+  garbage collector pauses the game for. The buffers are now created once
+  and reused.
+- An animated global shader keyword is switched only when its state
+  changes, not on every frame of the animation.
+
+### Fixed
+- **Compatibility with other mods.**
+  - Vivify's part of every hook it shares with the game and other mods
+    (sabers, notes, bombs, chains, debris, cut effects, pause, image
+    effects) is now isolated: if it throws, the error is logged once and
+    the game and the other mods carry on. Until now such an error unwound
+    through the other mods' hooks and usually crashed the game.
+  - The game's room recentering (VRCenterAdjust) runs untouched outside
+    Vivify maps. Vivify was skipping it in the menu and in ordinary maps,
+    so it differed from the base game everywhere, not just in Vivify maps.
+  - A failure in Vivify's start-up, or an unreadable config file, no longer
+    terminates the game at launch: Vivify disables itself or starts from
+    its defaults, and every other mod keeps working.
+- The session log now lists every loaded mod and its version at startup,
+  so a problem caused by another mod can be spotted from the log.
+
 ## [0.14.24] - 2026-10-10
 
 ### Added
