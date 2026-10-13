@@ -54,6 +54,8 @@ constexpr std::string_view kPcShadersForEmptyConfigKey = "pcShadersForEmptyQuest
 constexpr std::string_view kStandInShaderNameConfigKey = "standInShaderName";
 constexpr std::string_view kEffectResolutionConfigKey = "effectResolutionPercent";
 constexpr std::string_view kOffscreenCullingConfigKey = "offscreenCulling";
+constexpr std::string_view kCrashGuardConfigKey = "crashGuard";
+constexpr std::string_view kPcBundleForMissingShadersConfigKey = "pcBundleForMissingShaders";
 constexpr std::string_view kFarCullingConfigKey = "farCullingDistance";
 bool gMultipassRenderingEnabled = true;
 bool gVivifyDebugLogging = false;
@@ -116,6 +118,12 @@ int gEffectResolution = 100;
 // Animators in a map's prefabs skip updating while none of their renderers is
 // on screen (0.14.23).
 bool gOffscreenCulling = true;
+// Two loads of a converted bundle that never finish put it into the
+// untranslated (grey) fallback; off, that never happens (0.14.24).
+bool gCrashGuard = true;
+// A Quest bundle missing shaders its PC build has is played from the converted
+// PC build instead of being patched (0.14.24).
+bool gPcBundleForMissingShaders = false;
 // Metres beyond which the main camera draws nothing; 0 is off (0.14.23).
 int gFarCullingDistance = 0;
 
@@ -463,6 +471,21 @@ void RegisterModSettings() {
               SetIntConfigValue(kEffectResolutionConfigKey, percent, gEffectResolution);
             });
 
+        // Plays the whole map from its converted PC build when the Quest
+        // bundle shipped shaders empty, instead of patching those shaders in.
+        BSML::Lite::CreateToggle(
+            container->get_transform(), u"Use Only PC Bundle For Missing Shaders", gPcBundleForMissingShaders,
+            [](bool value) {
+              SetBoolConfigValue(kPcBundleForMissingShadersConfigKey, value, gPcBundleForMissingShaders);
+            });
+
+        // After two loads of a converted map that never finish, it is
+        // reconverted without shader translation (grey stand-ins) so it can
+        // be played. Off: maps always keep their translated shaders.
+        BSML::Lite::CreateToggle(
+            container->get_transform(), u"Crash Guard (grey fallback after 2 freezes)", gCrashGuard,
+            [](bool value) { SetBoolConfigValue(kCrashGuardConfigKey, value, gCrashGuard); });
+
         // Animators in the map's prefabs stop updating while nothing they
         // draw is on screen; their animation resumes at the right time.
         BSML::Lite::CreateToggle(
@@ -698,6 +721,14 @@ bool GetUsePcShadersForEmptyShaders() {
   return gPcShadersForEmpty;
 }
 
+bool GetCrashGuard() {
+  return gCrashGuard;
+}
+
+bool GetUsePcBundleForMissingShaders() {
+  return gPcBundleForMissingShaders;
+}
+
 bool GetOffscreenCulling() {
   return gOffscreenCulling;
 }
@@ -749,6 +780,8 @@ void EnsureConfigDefaults() {
                                         gStandInShaderName);
   needsWrite |= EnsureIntConfigValue(kEffectResolutionConfigKey, 100, 25, 100, gEffectResolution);
   needsWrite |= EnsureBoolConfigValue(kOffscreenCullingConfigKey, true, gOffscreenCulling);
+  needsWrite |= EnsureBoolConfigValue(kCrashGuardConfigKey, true, gCrashGuard);
+  needsWrite |= EnsureBoolConfigValue(kPcBundleForMissingShadersConfigKey, false, gPcBundleForMissingShaders);
   needsWrite |= EnsureIntConfigValue(kFarCullingConfigKey, 0, 0, 1000, gFarCullingDistance);
   if (needsWrite) {
     config.Write();
@@ -757,18 +790,68 @@ void EnsureConfigDefaults() {
 
 MOD_EXTERN_FUNC void setup(CModInfo *info) noexcept {
   *info = modInfo.to_c();
-  InstallVivifyFileLogSink();
-  getConfig().Load();
-  EnsureConfigDefaults();
+  try {
+    InstallVivifyFileLogSink();
+  } catch (...) {
+  }
+  // A config file another tool or a crash left unreadable must not take the
+  // game down at launch (setup is noexcept): Vivify starts from its defaults.
+  try {
+    getConfig().Load();
+  } catch (std::exception const& ex) {
+    PaperLogger.warn("Vivify: config could not be read ({}); using defaults", ex.what());
+    getConfig().config.SetObject();
+  } catch (...) {
+    getConfig().config.SetObject();
+  }
+  try {
+    EnsureConfigDefaults();
+  } catch (std::exception const& ex) {
+    PaperLogger.warn("Vivify: config defaults could not be written ({})", ex.what());
+  } catch (...) {
+  }
   // Note: gMultipassRenderingEnabled / gVivifyDebugLogging are intentionally NOT
   // reset here. EnsureConfigDefaults() above already loaded the saved values (or
   // wrote the defaults on first run); hardcoding them back to a fixed value here
   // would silently discard the player's saved settings-menu choice on every launch.
   PaperLogger.info("Vivify file logging active -> {}", kVivifyLogPath);
 }
+namespace {
+// Every other mod the loader started, in one line of the session log: the
+// first thing to know when Vivify misbehaves alongside something else (a
+// freeze in 0.14.22 turned out to be Adaptive Audio Latency and Custom
+// Models, found by turning mods off one at a time).
+void LogLoadedMods() {
+  CModResults results = modloader_get_loaded();
+  std::string list;
+  for (size_t i = 0; i < results.size; i++) {
+    auto const& info = results.array[i].info;
+    if (info.id == nullptr) continue;
+    if (!list.empty()) list += ", ";
+    list += info.id;
+    if (info.version != nullptr) list += std::string(" ") + info.version;
+  }
+  PaperLogger.info("Vivify: loaded mods ({}): {}", results.size, list.empty() ? "none reported" : list);
+  modloader_free_results(&results);
+}
+}
+
 MOD_EXTERN_FUNC void late_load() noexcept {
-  il2cpp_functions::Init();
-  custom_types::Register::AutoRegister();
-  RegisterModSettings();
-  Vivify::LateLoad();
+  // noexcept: anything escaping from here terminates the game at launch. A
+  // failure in Vivify's own start-up costs Vivify, not the game and every
+  // other mod with it.
+  try {
+    il2cpp_functions::Init();
+    custom_types::Register::AutoRegister();
+    RegisterModSettings();
+    Vivify::LateLoad();
+  } catch (std::exception const& ex) {
+    PaperLogger.error("Vivify late_load failed ({}); Vivify is not active this session", ex.what());
+  } catch (...) {
+    PaperLogger.error("Vivify late_load failed with a non-std exception; Vivify is not active this session");
+  }
+  try {
+    LogLoadedMods();
+  } catch (...) {
+  }
 }

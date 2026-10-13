@@ -33,25 +33,23 @@ void Runtime::ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTex
                                                          : (_preEffects.empty() && _postEffects.empty())));
   auto destId = (dest != nullptr) ? ToTargetId(dest) : CameraTargetId();
   if (passthroughOnly) {
-    auto* cb = UnityEngine::Rendering::CommandBuffer::New_ctor();
+    auto* cb = ImmediateCommandBuffer();
     cb->Blit(ToTargetId(src), destId);
     UnityEngine::Graphics::ExecuteCommandBuffer(cb);
-    cb->ReleaseBuffer();
-    cb->Dispose();
+    cb->Clear();
     return;
   }
   auto* main = EnsureCachedBlitTexture(_mainBlitTexture, src);
   auto* scratch = EnsureCachedBlitTexture(_scratchBlitTexture, src);
   if (!IsAlive(main) || !IsAlive(scratch)) {
-    auto* cb = UnityEngine::Rendering::CommandBuffer::New_ctor();
+    auto* cb = ImmediateCommandBuffer();
     cb->Blit(ToTargetId(src), destId);
     UnityEngine::Graphics::ExecuteCommandBuffer(cb);
-    cb->ReleaseBuffer();
-    cb->Dispose();
+    cb->Clear();
     return;
   }
 
-  auto* cb = UnityEngine::Rendering::CommandBuffer::New_ctor();
+  auto* cb = ImmediateCommandBuffer();
 
   std::vector<UnityEngine::RenderTexture*> selfBlitTemps;
 
@@ -128,8 +126,7 @@ void Runtime::ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTex
 
   cb->Blit(ToTargetId(mainCurrent), destId);
   UnityEngine::Graphics::ExecuteCommandBuffer(cb);
-  cb->ReleaseBuffer();
-  cb->Dispose();
+  cb->Clear();
   for (auto* temp : selfBlitTemps) {
     UnityEngine::RenderTexture::ReleaseTemporary(temp);
   }
@@ -180,10 +177,22 @@ void Runtime::ReleaseMidRenderTextures() {
   _midScratchRT = nullptr;
 }
 
+UnityEngine::Rendering::CommandBuffer* Runtime::ImmediateCommandBuffer() {
+  if (!_immediateCommandBuffer) {
+    _immediateCommandBuffer.emplace(UnityEngine::Rendering::CommandBuffer::New_ctor());
+  }
+  auto* cb = _immediateCommandBuffer.ptr();
+  cb->Clear();
+  return cb;
+}
+
 UnityEngine::Rendering::CommandBuffer* Runtime::BuildMidRenderCommandBuffer(
-    std::vector<ActiveBlitEffect> const& effects) {
+    std::vector<ActiveBlitEffect> const& effects, int bucket) {
   using RTI = UnityEngine::Rendering::RenderTargetIdentifier;
-  auto* cb = UnityEngine::Rendering::CommandBuffer::New_ctor();
+  auto& pooled = _midCommandBufferPool[bucket];
+  if (!pooled) pooled.emplace(UnityEngine::Rendering::CommandBuffer::New_ctor());
+  auto* cb = pooled.ptr();
+  cb->Clear();
   RTI srcId{};
   srcId._ctor(UnityEngine::Rendering::BuiltinRenderTextureType::CurrentActive);
   RTI dstId{};
@@ -287,7 +296,7 @@ void Runtime::AddMidRenderCommandBuffers(UnityEngine::Camera* camera) {
   for (int bucket = 0; bucket < kMidRenderOrderCount; bucket++) {
     auto const& effects = _midEffects[bucket];
     if (effects.empty()) continue;
-    auto* cb = BuildMidRenderCommandBuffer(effects);
+    auto* cb = BuildMidRenderCommandBuffer(effects, bucket);
     if (cb == nullptr) continue;
     camera->AddCommandBuffer(UnityEngine::Rendering::CameraEvent(kOrderEvents[bucket]), cb);
 
@@ -303,7 +312,8 @@ void Runtime::RemoveMidRenderCommandBuffers() {
     if (IsAlive(_midCommandBufferCamera)) {
       _midCommandBufferCamera->RemoveCommandBuffer(UnityEngine::Rendering::CameraEvent(cameraEvent), cb.ptr());
     }
-    cb->Dispose();
+    // Pooled (BuildMidRenderCommandBuffer): emptied for the next frame, not disposed.
+    cb->Clear();
   }
   _activeMidCommandBuffers.clear();
   _midCommandBufferCamera = nullptr;

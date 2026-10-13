@@ -11,6 +11,62 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+## [0.14.25] - 2026-10-13
+
+Requested as "0.14.24.1"; qpm and QuestPatcher only accept three-part
+versions, so it ships as 0.14.25. Every feature and setting is unchanged.
+
+### Changed
+- **Fewer frame hitches from garbage collection.** Every frame with a map
+  effect running, Vivify created a new command buffer for each blit (and one
+  per mid-render effect group, plus one per depth copy for map-created
+  cameras), then threw it away. That steady managed garbage is what the
+  garbage collector pauses the game for. The buffers are now created once
+  and reused.
+- An animated global shader keyword is switched only when its state
+  changes, not on every frame of the animation.
+
+### Fixed
+- **Compatibility with other mods.**
+  - Vivify's part of every hook it shares with the game and other mods
+    (sabers, notes, bombs, chains, debris, cut effects, pause, image
+    effects) is now isolated: if it throws, the error is logged once and
+    the game and the other mods carry on. Until now such an error unwound
+    through the other mods' hooks and usually crashed the game.
+  - The game's room recentering (VRCenterAdjust) runs untouched outside
+    Vivify maps. Vivify was skipping it in the menu and in ordinary maps,
+    so it differed from the base game everywhere, not just in Vivify maps.
+  - A failure in Vivify's start-up, or an unreadable config file, no longer
+    terminates the game at launch: Vivify disables itself or starts from
+    its defaults, and every other mod keeps working.
+- The session log now lists every loaded mod and its version at startup,
+  so a problem caused by another mod can be spotted from the log.
+
+## [0.14.24] - 2026-10-10
+
+### Added
+- **Use Only PC Bundle For Missing Shaders** (settings, off by default).
+  When a map's Quest bundle shipped shaders empty that its PC build has,
+  the whole map is played from the converted PC build instead of the Quest
+  bundle with those shaders patched in.
+- **Crash Guard** (settings, on by default). Off, a converted map is never
+  put into the grey untranslated fallback, however its loads ended.
+
+### Fixed
+- **Converted maps stuck grey with invisible notes (Yoi Okashi to Warui
+  Okashi).** Two loads of a converted map that never finish put it into the
+  crash guard's fallback: converted again without shader translation, so
+  everything draws as a grey stand-in and replaced notes can disappear. It
+  stayed that way until the converter changed. The freezes caused by other
+  mods (Adaptive Audio Latency and others) counted as strikes, so maps went
+  grey that have nothing wrong with them: Yoi Okashi's bundle converts with
+  all 24 shaders and 163 variants linked, and all 216 programs compile and
+  link under glslang.
+  - Conversion cache version 19 clears every strike, so each converted map
+    gets its translated shaders back once.
+  - A map loaded in the fallback is now named in the session log, with how
+    to get it out (Force Reconvert All, or Crash Guard off).
+
 ## [0.14.23] - 2026-10-10
 
 ### Added
