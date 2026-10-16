@@ -62,6 +62,17 @@ void Runtime::ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTex
                       UnityEngine::Material* material, int pass) {
     auto const dstId = ToTargetId(dst);
     material = BlitMaterialFor(material, dst);
+    // PC Vivify's GrabPass shaders sample _GrabTexture. CommandBuffer.Blit binds
+    // its input as _MainTex, not _GrabTexture, so these shaders otherwise sample
+    // an unbound texture on Quest and can turn the whole view white. Bind the
+    // actual blit source for this command before drawing the effect.
+    if (material != nullptr) {
+      auto* shader = material->get_shader().unsafePtr();
+      auto const shaderName = ShaderNameForLog(shader);
+      if (IsAlive(shader) && shaderName.find("Grab Pass") != std::string::npos) {
+        cb->SetGlobalTexture("_GrabTexture", srcId);
+      }
+    }
     if (material == nullptr) {
       cb->Blit(srcId, dstId);
     } else if (pass >= 0) {
@@ -205,6 +216,17 @@ UnityEngine::Rendering::CommandBuffer* Runtime::BuildMidRenderCommandBuffer(
   auto emitBlit = [&](RTI blitSrc, UnityEngine::RenderTexture* dst, UnityEngine::Material* material, int pass) {
     RTI const blitDst = ToTargetId(dst);
     material = BlitMaterialFor(material, dst);
+    // PC Vivify's GrabPass shaders sample _GrabTexture. CommandBuffer.Blit binds
+    // its input as _MainTex, not _GrabTexture, so these shaders otherwise sample
+    // an unbound texture on Quest and can turn the whole view white. Bind the
+    // actual blit source for this command before drawing the effect.
+    if (material != nullptr) {
+      auto* shader = material->get_shader().unsafePtr();
+      auto const shaderName = ShaderNameForLog(shader);
+      if (IsAlive(shader) && shaderName.find("Grab Pass") != std::string::npos) {
+        cb->SetGlobalTexture("_GrabTexture", srcId);
+      }
+    }
     if (material == nullptr) {
       cb->Blit(blitSrc, blitDst);
     } else if (pass >= 0) {
