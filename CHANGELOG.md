@@ -11,6 +11,34 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+## [0.14.26] - 2026-10-16
+
+### Added
+- **Two downloads per release.**
+  - `Vivify-v<version>.qmod`: the full build, every feature.
+  - `Vivify-Lite-v<version>.qmod`: the feature set of 0.14.7 (plus the
+    geometry-shader setting, which the issue asked for). The lite build
+    hides and switches off everything added after 0.14.7: effect resolution,
+    culling, the PC-bundle-only option, crash guard toggle, prepare shaders,
+    replay render mode, the blit fix, the Reset and Redownload buttons, and
+    the scene-depth scan (depth stays on, as in 0.14.7). Its converter also
+    translates every shader variant, as 0.14.7 did, and it keeps the
+    freeze fix from 0.14.22 (integers in integer variables).
+  - Both keep mod id `vivify`, so they share one settings file. Install one.
+
+### Changed
+- **Settings are grouped**: Performance, Shaders and Conversion, Features,
+  Conversion actions, Diagnostics.
+- **Finer slider steps**: Effect Resolution moves in 5% steps, Far Culling
+  in 10 m steps.
+- The bottom of the settings menu is no longer clipped: spacer lines follow
+  the diagnostic paths.
+
+### Not changed yet
+- Mirror and reflection head-tilt (issue #81): reflections still move with
+  the headset. This build does not fix it; it needs a headset test to be
+  sure of the cause.
+
 ## [0.14.25] - 2026-10-13
 
 Requested as "0.14.24.1"; qpm and QuestPatcher only accept three-part
