@@ -380,13 +380,11 @@ void RegisterModSettings() {
         BSML::Lite::CreateText(container->get_transform(),
                                StringW(std::string("Vivify ") + VERSION + (kLiteBuild ? " (lite)" : "")));
 
-        // Settings are grouped by what they do. Controls that exist only in the
-        // full build are skipped entirely in lite (kLiteBuild), not shown disabled.
-        auto header = [&](std::string const& title) {
-          BSML::Lite::CreateText(container->get_transform(), StringW("<size=110%><b>" + title + "</b></size>"));
-        };
+        // Keep this as a flat list: BSML-Lite's scrollable settings container
+        // does not reliably reserve vertical layout space for standalone text
+        // headers on Quest, which causes later controls to overlap them.
+        // Controls that exist only in the full build are skipped in lite.
 
-        header("Performance");
         if constexpr (!kLiteBuild) {
           // Renders map post-process effects below eye resolution and scales
           // them up. Full-screen raymarchers cost per pixel: 50% is a quarter of
@@ -419,7 +417,6 @@ void RegisterModSettings() {
             container->get_transform(), u"Disable CreateCamera Depth", GetDisableCreateCameraDepth(),
             [](bool value) { SetBoolConfigValue(kDisableCreateCameraDepthConfigKey, value, gDisableCreateCameraDepth); });
 
-        header("Shaders and Conversion");
         BSML::Lite::CreateToggle(
             container->get_transform(), u"Convert PC Bundles On Device", GetConvertPcBundlesOnDevice(),
             [](bool value) { SetBoolConfigValue(kConvertPcBundlesOnDeviceConfigKey, value, gConvertPcBundlesOnDevice); });
@@ -460,7 +457,6 @@ void RegisterModSettings() {
               [](bool value) { SetBoolConfigValue(kBlitFixConfigKey, value, gBlitFix); });
         }
 
-        header("Features");
         BSML::Lite::CreateToggle(
             container->get_transform(), u"AudioLink", GetAudioLinkEnabled(),
             [](bool value) { SetBoolConfigValue(kAudioLinkConfigKey, value, gAudioLink); });
@@ -477,7 +473,6 @@ void RegisterModSettings() {
             container->get_transform(), u"Disable VR Center Adjust Handling", GetDisableVRCenterAdjust(),
             [](bool value) { SetBoolConfigValue(kDisableVRCenterAdjustConfigKey, value, gDisableVRCenterAdjust); });
 
-        header("Conversion");
         // A map whose only asset bundle is a PC build has its play button
         // disabled, so it can never be selected into. These convert every
         // installed map in one pass instead.
