@@ -183,11 +183,18 @@ jobs:
       run: |
         shopt -s nullglob
         built=(./*.qmod)
-        if [ ${#built[@]} -ne 1 ]; then
-          echo "::error::expected one lite .qmod, found ${#built[@]}"
+        lite=()
+        for file in "${built[@]}"; do
+          if [ "$file" != "./Vivify-v${{ steps.mod_version.outputs.version }}.qmod" ]; then
+            lite+=("$file")
+          fi
+        done
+        if [ ${#lite[@]} -ne 1 ]; then
+          echo "::error::expected one lite .qmod after excluding the full build, found ${#lite[@]}"
+          printf 'QMOD files: %s\n' "${built[@]}"
           exit 1
         fi
-        mv "${built[0]}" "./Vivify-Lite-v${{ steps.mod_version.outputs.version }}.qmod"
+        mv "${lite[0]}" "./Vivify-Lite-v${{ steps.mod_version.outputs.version }}.qmod"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4
