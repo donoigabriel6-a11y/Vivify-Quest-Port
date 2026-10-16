@@ -11,6 +11,34 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+## [0.14.27] - 2026-10-16
+
+### Fixed
+- **Geometry shaders that pass a varying straight through no longer leave
+  their whole variant grey.** A geometry program that passed a semantic
+  through (for example `TEXCOORD0`) would need one name as both its input
+  and its output, so the converter refused it, and the variant stayed on
+  DirectX: grey or missing models on the headset. The geometry output now
+  takes a `gs_` name and the fragment stage's input is renamed to match when
+  they link.
+  - Reported in #60 (42 Flux: grey or missing models; Extra Sensory II) and
+    the geometry-shader variants in 743 Aether (#64, #81).
+  - Checked: a raw 743 Aether PC bundle now translates 34 of 35 shaders with
+    all 180 programs compiling and linking under glslang, where 2 of its
+    shaders were refused before. A new converter test links a pass-through
+    geometry stage with its fragment stage.
+
+### Known, not fixed
+- Two geometry shaders in 743 Aether (Beat Saber Wireframe 3D-Noise and
+  TriangleExplosion) read `SV_RenderTargetArrayIndex`, the eye index in
+  single-pass stereo, as a geometry input. Those variants still stay on
+  DirectX. Turning on Draw Geometry-Shader Effects draws them without the
+  geometry stage. Passing the eye index through the geometry stage needs a
+  headset test.
+- Solid or white screen-effect maps (#67, #69, #87) are not reproduced here:
+  their bundles are not in the reports' logs. The experimental Blit Fix
+  setting is the current workaround.
+
 ## [0.14.26] - 2026-10-16
 
 ### Added
