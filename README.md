@@ -1,4 +1,6 @@
-
+# Credits to trail-b1az3r for making the Vivify I am just doing bug fixes!
+.
+.
 ### if you have issues please just make a issue and follow issue template
 
 ### ***if you cant find session log: look at log-help.md for help*** and make sure to get both logs, (/mods/vivify and /logs2)
