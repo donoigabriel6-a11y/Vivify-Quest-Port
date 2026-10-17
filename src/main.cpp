@@ -12,6 +12,8 @@
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Transform.hpp"
+#include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML/SharedCoroutineStarter.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -19,8 +21,10 @@
 #include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 #include "HMUI/CurvedTextMeshPro.hpp"
 #include "bsml/shared/BSML/Settings/BSMLSettings.hpp"
+#include "bsml/shared/BSML/Settings/SettingsMenu.hpp"
 #include "custom-types/shared/register.hpp"
 #include "scotland2/shared/modloader.h"
+#include "UnityEngine/WaitForEndOfFrame.hpp"
 
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
 
@@ -345,6 +349,35 @@ void SetConvertStatusText(std::string const& text) {
   gConvertStatusText->set_text(StringW(text));
 }
 
+custom_types::Helpers::Coroutine OpenVivifySettingsFromMainMenu() {
+  auto* settings = BSML::BSMLSettings::get_instance();
+  settings->PresentSettings();
+  auto* flow = settings->get_modSettingsFlowCoordinator();
+
+  int waitedFrames = 0;
+  while ((flow->isAnimating || flow->isPresenting || flow->activeController == nullptr) &&
+         waitedFrames < 240) {
+    waitedFrames++;
+    co_yield reinterpret_cast<System::Collections::IEnumerator*>(
+        UnityEngine::WaitForEndOfFrame::New_ctor());
+  }
+  if (flow->isAnimating || flow->isPresenting || flow->activeController == nullptr) {
+    PaperLogger.error("Vivify could not open its settings: the Mod Settings screen did not finish opening");
+    co_return;
+  }
+
+  for (auto cell : settings->get_settingsMenus()) {
+    auto* menu = reinterpret_cast<BSML::SettingsMenu*>(cell);
+    if (menu != nullptr && menu->name == StringW("Vivify")) {
+      flow->OpenMenu(menu);
+      co_return;
+    }
+  }
+
+  PaperLogger.error("Vivify could not find its settings page in the Mod Settings list");
+  co_return;
+}
+
 void RegisterModSettings() {
   BSML::BSMLSettings::get_instance()->TryAddSettingsMenu(
       [](HMUI::ViewController* viewController, bool firstActivation, bool, bool) {
@@ -583,6 +616,16 @@ void RegisterModSettings() {
         }
       },
       "Vivify", false);
+
+  auto* menuButton = BSML::Register::RegisterMenuButton(
+      "Vivify", "Open Vivify mod settings",
+      []() {
+        BSML::SharedCoroutineStarter::get_instance()->StartCoroutine(
+            custom_types::Helpers::CoroutineHelper::New(OpenVivifySettingsFromMainMenu()));
+      });
+  if (menuButton == nullptr) {
+    PaperLogger.error("Vivify could not register its left-side main menu button");
+  }
 }
 }
 

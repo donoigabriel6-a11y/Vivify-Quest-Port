@@ -11,6 +11,10 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+### Added
+- A left-side **Vivify** button on the main menu opens the existing Vivify
+  settings page in Mod Settings.
+
 ## [0.14.27] - 2026-10-16
 
 ### Fixed
@@ -759,4 +763,3 @@ versions, so it ships as 0.14.25. Every feature and setting is unchanged.
   - the depth texture format;
   - depth-only cameras;
   - `targetTexture` breaking stereo.
-
