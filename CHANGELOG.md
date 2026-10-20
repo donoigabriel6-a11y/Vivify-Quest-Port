@@ -15,6 +15,10 @@ conversion cache version, and cached conversions are redone automatically.
 - A left-side **Vivify** button on the main menu opens the existing Vivify
   settings page in Mod Settings.
 
+### Fixed
+- Vivify settings labels and section headers now reserve their own vertical
+  space in the scroll view instead of overlapping nearby controls.
+
 ## [0.14.27] - 2026-10-16
 
 ### Fixed

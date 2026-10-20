@@ -402,6 +402,13 @@ void RegisterModSettings() {
         auto* container = BSML::Lite::CreateScrollableSettingsContainer(viewController->get_transform());
         if (container == nullptr) return;
 
+        auto createTextRow = [&](StringW text, float height) {
+          // The settings scroll container does not drive child heights, so
+          // text created at its default zero size overlaps adjacent controls.
+          return BSML::Lite::CreateText(container->get_transform(), text, UnityEngine::Vector2(0.0f, 0.0f),
+                                        UnityEngine::Vector2(90.0f, height));
+        };
+
         // Which build is actually running, in the headset, without a file.
         // "the new features do not work" and "the new build did not install"
         // look identical from the outside, and a version number here separates
@@ -410,16 +417,14 @@ void RegisterModSettings() {
         // Built as a StringW from a std::string, the way every other text in
         // this menu is: the std::u16string this used to assemble by hand is
         // what took the menu down.
-        BSML::Lite::CreateText(container->get_transform(),
-                               StringW(std::string("Vivify ") + VERSION + (kLiteBuild ? " (lite)" : "")));
+        createTextRow(StringW(std::string("Vivify ") + VERSION + (kLiteBuild ? " (lite)" : "")), 7.0f);
 
         // Keep section headers, with a separate blank text row after each
         // header so the following control has breathing room on Quest.
         // Controls that exist only in the full build are skipped in lite.
         auto header = [&](std::string const& title) {
-          BSML::Lite::CreateText(container->get_transform(),
-                                 StringW("<size=110%><b>" + title + "</b></size>"));
-          BSML::Lite::CreateText(container->get_transform(), u" ");
+          createTextRow(StringW("<size=110%><b>" + title + "</b></size>"), 6.0f);
+          createTextRow(u" ", 2.0f);
         };
 
         header("Performance");
@@ -518,7 +523,7 @@ void RegisterModSettings() {
         // A map whose only asset bundle is a PC build has its play button
         // disabled, so it can never be selected into. These convert every
         // installed map in one pass instead.
-        gConvertStatusText = BSML::Lite::CreateText(container->get_transform(), u"Idle");
+        gConvertStatusText = createTextRow(u"Idle", 8.0f);
         if (Vivify::IsBulkPcBundleConversionRunning()) SetConvertStatusText("Converting...");
         // One progress callback for both buttons; they differ only in whether an
         // already-cached conversion is reused or thrown away first.
@@ -597,16 +602,17 @@ void RegisterModSettings() {
             [](bool value) { SetBoolConfigValue(kVivifyDebugLoggingConfigKey, value, gVivifyDebugLogging); });
         // paperlog output is not reachable without adb, so Vivify writes its own
         // plain-text files next to its data. Their paths are shown here.
-        BSML::Lite::CreateText(container->get_transform(), u"Diagnostics files (plain .txt):");
-        BSML::Lite::CreateText(container->get_transform(), StringW("<size=70%>" + Vivify::Report::FilePath() + "</size>"));
-        BSML::Lite::CreateText(container->get_transform(), StringW("<size=70%>" + std::string(kVivifyLogPath) + "</size>"));
+        createTextRow(u"Diagnostics files (plain .txt):", 6.0f);
+        createTextRow(StringW("<size=70%>" + Vivify::Report::FilePath() + "</size>"), 6.0f);
+        createTextRow(StringW("<size=70%>" + std::string(kVivifyLogPath) + "</size>"), 6.0f);
         if constexpr (!kLiteBuild) {
-          BSML::Lite::CreateText(container->get_transform(),
-                                 StringW("<size=70%>" + std::string(kVivifyLogDir) + "/vivify_global.txt (every session)</size>"));
+          createTextRow(StringW("<size=70%>" + std::string(kVivifyLogDir) +
+                                "/vivify_global.txt (every session)</size>"),
+                        6.0f);
         }
         // Spacers, so the last line of the menu is not clipped by the scroll view.
-        BSML::Lite::CreateText(container->get_transform(), u" ");
-        BSML::Lite::CreateText(container->get_transform(), u" ");
+        createTextRow(u" ", 2.0f);
+        createTextRow(u" ", 2.0f);
         } catch (std::exception const& e) {
           PaperLogger.error("Vivify settings menu: construction threw ({}); the controls after the "
                             "failure are missing", e.what());
