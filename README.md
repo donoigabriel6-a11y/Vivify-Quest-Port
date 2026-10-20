@@ -1,4 +1,4 @@
-# Credits to trail-b1az3r for making the Vivify I am just doing bug fixes!
+# Credits to trail-b1az3r for making the Vivify I am just doing bug fixes, and improving.
 
 ### if you have issues please just make a issue and follow issue template
 
