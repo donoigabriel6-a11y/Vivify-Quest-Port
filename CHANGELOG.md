@@ -14,10 +14,18 @@ conversion cache version, and cached conversions are redone automatically.
 ### Added
 - A left-side **Vivify** button on the main menu opens the existing Vivify
   settings page in Mod Settings.
+- AudioLink Gain, Bass, and Treble controls are now available in Vivify
+  settings and apply immediately.
 
 ### Fixed
 - Vivify settings labels and section headers now reserve their own vertical
   space in the scroll view instead of overlapping nearby controls.
+
+### Performance
+- AudioLink now converts local time only when the clock second changes, rather
+  than calling the system time conversion routine every frame.
+- AudioLink avoids copying the full audio buffer each frame after detecting a
+  silent right channel, while still publishing matching left/right samples.
 
 ## [0.14.27] - 2026-10-16
 

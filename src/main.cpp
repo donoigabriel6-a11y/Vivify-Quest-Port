@@ -1,8 +1,10 @@
 #include "main.hpp"
 #include "VivifyGlobalLog.hpp"
+#include "VivifyAudioLink.hpp"
 #include <ctime>
 #include "VivifyRuntime.hpp"
 #include "VivifyReport.hpp"
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <fstream>
@@ -47,6 +49,9 @@ constexpr std::string_view kSceneDepthConfigKey = "sceneDepthTexture";
 constexpr std::string_view kSubmitScoresConfigKey = "submitScoresOnVivifyMaps";
 constexpr std::string_view kTranslateShadersConfigKey = "translateShadersOnConversion";
 constexpr std::string_view kAudioLinkConfigKey = "audioLink";
+constexpr std::string_view kAudioLinkGainConfigKey = "audioLinkGain";
+constexpr std::string_view kAudioLinkBassConfigKey = "audioLinkBass";
+constexpr std::string_view kAudioLinkTrebleConfigKey = "audioLinkTreble";
 constexpr std::string_view kMapRealtimeShadowsConfigKey = "mapRealtimeShadows";
 constexpr std::string_view kReplayRenderModeConfigKey = "replayRenderMode";
 constexpr std::string_view kBlitFixConfigKey = "blitScreenTextureFix";
@@ -102,6 +107,9 @@ bool gSubmitScores = true;
 // reconvert.
 bool gTranslateShaders = true;
 bool gAudioLink = true;
+float gAudioLinkGain = 1.0f;
+float gAudioLinkBass = 1.0f;
+float gAudioLinkTreble = 1.0f;
 bool gMapRealtimeShadows = false;
 bool gReplayRenderMode = false;
 bool gBlitFix = false;
@@ -266,6 +274,28 @@ bool EnsureIntConfigValue(std::string_view key, int defaultValue, int minValue, 
   return true;
 }
 
+bool EnsureFloatConfigValue(std::string_view key, float defaultValue, float minValue, float maxValue,
+                            float& value) {
+  auto& doc = getConfig().config;
+  auto it = doc.FindMember(key.data());
+  if (it != doc.MemberEnd() && it->value.IsNumber()) {
+    double const stored = it->value.GetDouble();
+    if (std::isfinite(stored) && stored >= minValue && stored <= maxValue) {
+      value = static_cast<float>(stored);
+      return false;
+    }
+  }
+
+  auto& allocator = doc.GetAllocator();
+  value = defaultValue;
+  if (it == doc.MemberEnd()) {
+    doc.AddMember(rapidjson::Value(key.data(), allocator), rapidjson::Value(defaultValue), allocator);
+  } else {
+    it->value.SetFloat(defaultValue);
+  }
+  return true;
+}
+
 bool EnsureBoolConfigValue(std::string_view key, bool defaultValue, bool& value) {
   auto& doc = getConfig().config;
   auto it = doc.FindMember(key.data());
@@ -335,6 +365,32 @@ void SetIntConfigValue(std::string_view key, int newValue, int& value) {
   }
   value = newValue;
   config.Write();
+}
+
+bool SetFloatConfigValue(std::string_view key, float newValue, float& value) {
+  if (!std::isfinite(newValue)) {
+    PaperLogger.warn("Vivify settings: ignoring a non-finite value for '{}'", key);
+    return false;
+  }
+  if (gSettingsMenuBuilding) {
+    PaperLogger.info("Vivify settings: ignoring a '{}' change to {} that arrived while the menu was "
+                     "still being built",
+                     key, newValue);
+    return false;
+  }
+  auto& config = getConfig();
+  auto& doc = config.config;
+  EnsureConfigObject();
+  auto& allocator = doc.GetAllocator();
+  auto it = doc.FindMember(key.data());
+  if (it == doc.MemberEnd()) {
+    doc.AddMember(rapidjson::Value(key.data(), allocator), rapidjson::Value(newValue), allocator);
+  } else {
+    it->value.SetFloat(newValue);
+  }
+  value = newValue;
+  config.Write();
+  return true;
 }
 
 // Label under the bulk-convert button. The settings view controller is
@@ -506,6 +562,27 @@ void RegisterModSettings() {
         BSML::Lite::CreateToggle(
             container->get_transform(), u"AudioLink", GetAudioLinkEnabled(),
             [](bool value) { SetBoolConfigValue(kAudioLinkConfigKey, value, gAudioLink); });
+        BSML::Lite::CreateIncrementSetting(
+            container->get_transform(), u"AudioLink Gain", 1, 0.1f, gAudioLinkGain, 0.0f, 4.0f,
+            [](float value) {
+              float const bounded = std::clamp(value, 0.0f, 4.0f);
+              if (SetFloatConfigValue(kAudioLinkGainConfigKey, bounded, gAudioLinkGain))
+                Vivify::AudioLink::SetTuning(gAudioLinkGain, gAudioLinkBass, gAudioLinkTreble);
+            });
+        BSML::Lite::CreateIncrementSetting(
+            container->get_transform(), u"AudioLink Bass", 1, 0.1f, gAudioLinkBass, 0.0f, 3.0f,
+            [](float value) {
+              float const bounded = std::clamp(value, 0.0f, 3.0f);
+              if (SetFloatConfigValue(kAudioLinkBassConfigKey, bounded, gAudioLinkBass))
+                Vivify::AudioLink::SetTuning(gAudioLinkGain, gAudioLinkBass, gAudioLinkTreble);
+            });
+        BSML::Lite::CreateIncrementSetting(
+            container->get_transform(), u"AudioLink Treble", 1, 0.1f, gAudioLinkTreble, 0.0f, 3.0f,
+            [](float value) {
+              float const bounded = std::clamp(value, 0.0f, 3.0f);
+              if (SetFloatConfigValue(kAudioLinkTrebleConfigKey, bounded, gAudioLinkTreble))
+                Vivify::AudioLink::SetTuning(gAudioLinkGain, gAudioLinkBass, gAudioLinkTreble);
+            });
         BSML::Lite::CreateToggle(
             container->get_transform(), u"Submit Scores On Vivify Maps", GetSubmitScoresOnVivifyMaps(),
             [](bool value) { SetBoolConfigValue(kSubmitScoresConfigKey, value, gSubmitScores); });
@@ -788,6 +865,9 @@ void EnsureConfigDefaults() {
   needsWrite |= EnsureBoolConfigValue(kSubmitScoresConfigKey, true, gSubmitScores);
   needsWrite |= EnsureBoolConfigValue(kTranslateShadersConfigKey, true, gTranslateShaders);
   needsWrite |= EnsureBoolConfigValue(kAudioLinkConfigKey, true, gAudioLink);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkGainConfigKey, 1.0f, 0.0f, 4.0f, gAudioLinkGain);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkBassConfigKey, 1.0f, 0.0f, 3.0f, gAudioLinkBass);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkTrebleConfigKey, 1.0f, 0.0f, 3.0f, gAudioLinkTreble);
   needsWrite |= EnsureBoolConfigValue(kMapRealtimeShadowsConfigKey, false, gMapRealtimeShadows);
   needsWrite |= EnsureBoolConfigValue(kReplayRenderModeConfigKey, false, gReplayRenderMode);
   needsWrite |= EnsureBoolConfigValue(kBlitFixConfigKey, false, gBlitFix);
@@ -804,6 +884,7 @@ void EnsureConfigDefaults() {
   if (needsWrite) {
     config.Write();
   }
+  Vivify::AudioLink::SetTuning(gAudioLinkGain, gAudioLinkBass, gAudioLinkTreble);
 }
 
 MOD_EXTERN_FUNC void setup(CModInfo *info) noexcept {

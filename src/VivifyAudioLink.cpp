@@ -24,12 +24,14 @@
 #include "UnityEngine/Vector4.hpp"
 #include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <optional>
 #include <string>
 
@@ -103,6 +105,9 @@ struct State {
   int fpsCount = 0;
   int rightChannelTestCounter = kRightChannelTestDelay;
   bool ignoreRightChannel = false;
+  Settings settings{};
+  std::time_t cachedLocalTimeSecond = std::numeric_limits<std::time_t>::min();
+  int cachedLocalSecondsOfDay = 0;
 };
 
 State& S() {
@@ -183,7 +188,7 @@ bool WriteBundleFile() {
 
 // AudioLink.cs UpdateSettings.
 void ApplySettings(State& s) {
-  Settings const settings;
+  Settings const& settings = s.settings;
   auto* m = s.material;
   m->SetFloat(s.ids.gain, settings.gain);
   m->SetFloat(s.ids.fadeLength, settings.fadeLength);
@@ -375,9 +380,7 @@ void SendAudio(State& s) {
   source->GetOutputData(frames, 0);
   std::copy(frames.begin(), frames.end(), s.framesL.begin());
   if (s.rightChannelTestCounter > 0) {
-    if (s.ignoreRightChannel) {
-      s.framesR = s.framesL;
-    } else {
+    if (!s.ignoreRightChannel) {
       source->GetOutputData(frames, 1);
       std::copy(frames.begin(), frames.end(), s.framesR.begin());
     }
@@ -388,14 +391,14 @@ void SendAudio(State& s) {
     source->GetOutputData(frames, 1);
     std::copy(frames.begin(), frames.end(), s.framesR.begin());
     s.ignoreRightChannel = s.framesR[0] == 0.0f;
-    if (s.ignoreRightChannel) s.framesR = s.framesL;
   }
   ArrayW<float> samples(static_cast<Array<float>*>(s.samples->ptr()));
   for (int i = 0; i < 4; i++) {
     auto const offset = static_cast<size_t>(i * kSamplesPerArray);
     std::copy_n(s.framesL.begin() + offset, kSamplesPerArray, samples.begin());
     s.material->SetFloatArray(s.ids.samplesL[static_cast<size_t>(i)], samples);
-    std::copy_n(s.framesR.begin() + offset, kSamplesPerArray, samples.begin());
+    auto const& right = s.ignoreRightChannel ? s.framesL : s.framesR;
+    std::copy_n(right.begin() + offset, kSamplesPerArray, samples.begin());
     s.material->SetFloatArray(s.ids.samplesR[static_cast<size_t>(i)], samples);
   }
 }
@@ -418,16 +421,19 @@ void Update(State& s) {
   if (s.elapsedTime >= s.fpsTime) FpsUpdate(s);
 
   auto const now = std::chrono::system_clock::now();
-  std::time_t const wall = std::chrono::system_clock::to_time_t(now);
-  std::tm local{};
-  localtime_r(&wall, &local);
-  double const subSecond =
-      std::chrono::duration<double>(now.time_since_epoch()).count() - static_cast<double>(wall);
-  double const localSeconds = local.tm_hour * 3600.0 + local.tm_min * 60.0 + local.tm_sec + subSecond;
+  double const utcSecondsUnix = std::chrono::duration<double>(now.time_since_epoch()).count();
+  std::time_t const wall = static_cast<std::time_t>(std::floor(utcSecondsUnix));
+  if (wall != s.cachedLocalTimeSecond) {
+    std::tm local{};
+    localtime_r(&wall, &local);
+    s.cachedLocalTimeSecond = wall;
+    s.cachedLocalSecondsOfDay = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec;
+  }
+  double const subSecond = utcSecondsUnix - static_cast<double>(wall);
+  double const localSeconds = s.cachedLocalSecondsOfDay + subSecond;
   s.material->SetVector(s.ids.advancedTimeProps0,
                         UnityEngine::Vector4{static_cast<float>(s.elapsedTime), static_cast<float>(s.elapsedTimeMSW),
                                              static_cast<float>(localSeconds), 0.0f});
-  double const utcSecondsUnix = std::chrono::duration<double>(now.time_since_epoch()).count();
   s.material->SetVector(s.ids.advancedTimeProps1,
                         UnityEngine::Vector4{static_cast<float>(s.networkTimeMS & 65535),
                                              static_cast<float>(s.networkTimeMS >> 16),
@@ -458,6 +464,17 @@ void Update(State& s) {
 
 bool IsActive() {
   return S().active;
+}
+
+void SetTuning(float gain, float bass, float treble) {
+  auto& s = S();
+  s.settings.gain = std::isfinite(gain) ? std::clamp(gain, 0.0f, 4.0f) : 1.0f;
+  s.settings.bass = std::isfinite(bass) ? std::clamp(bass, 0.0f, 3.0f) : 1.0f;
+  s.settings.treble = std::isfinite(treble) ? std::clamp(treble, 0.0f, 3.0f) : 1.0f;
+  if (!Alive(s.material)) return;
+  s.material->SetFloat(s.ids.gain, s.settings.gain);
+  s.material->SetFloat(s.ids.bass, s.settings.bass);
+  s.material->SetFloat(s.ids.treble, s.settings.treble);
 }
 
 void Tick() {
