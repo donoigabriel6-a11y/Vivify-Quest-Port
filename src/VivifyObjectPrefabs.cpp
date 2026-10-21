@@ -4,11 +4,28 @@
 #include "GlobalNamespace/ColorNoteVisuals.hpp"
 #include "UnityEngine/AudioSource.hpp"
 #include "UnityEngine/Canvas.hpp"
+#include "System/Type.hpp"
+#include <algorithm>
+#include <array>
+#include <cctype>
 #include <exception>
+#include "UnityEngine/Time.hpp"
 #include "UnityEngine/AnimatorCullingMode.hpp"
 
 namespace Vivify {
 namespace {
+bool IsTrailRenderer(UnityEngine::Renderer* renderer) {
+  if (!IsManagedAlive(renderer)) return false;
+  auto* type = renderer->GetType();
+  if (type != nullptr && ToStdString(type->get_Name()).find("Trail") != std::string::npos) return true;
+  auto* gameObject = renderer->get_gameObject().unsafePtr();
+  if (!IsManagedAlive(gameObject)) return false;
+  std::string name = ToStdString(gameObject->get_name());
+  std::transform(name.begin(), name.end(), name.begin(),
+                 [](unsigned char value) { return static_cast<char>(std::tolower(value)); });
+  return name.find("trail") != std::string::npos;
+}
+
 // Offscreen Culling (0.14.23): an animator whose hierarchy draws something
 // stops writing transforms while none of those renderers is visible, and picks
 // up at the right time once one is (its speed and time are still driven by
@@ -1018,6 +1035,59 @@ void Runtime::UpdateSaberReplacementColors() {
       ApplySaberReplacementColor(target.controller, target.saber, it->second);
     }
   }
+  ReassertSaberTrailOverrides();
+}
+
+void Runtime::ReassertSaberTrailOverrides() {
+  int const frame = UnityEngine::Time::get_frameCount();
+  bool const scanForNewRenderers = frame - _lastSaberTrailScanFrame >= 30;
+  for (auto const& target : _activeSabers) {
+    auto replacementIt = _saberReplacements.find(target.controller);
+    if (replacementIt == _saberReplacements.end()) continue;
+    auto& replacement = replacementIt->second;
+
+    for (auto* renderer : replacement.disabledRenderers) {
+      if (IsAlive(renderer) && renderer->get_enabled()) renderer->set_enabled(false);
+    }
+    if (!scanForNewRenderers || !IsAlive(target.saber) ||
+        !ShouldHideOriginal(FindAssignedSaberTrailPrefabs(static_cast<int>(target.saber->get_saberType())))) {
+      continue;
+    }
+
+    auto disableTrailRenderer = [this, &replacement](UnityEngine::Renderer* renderer) {
+      if (!IsTrailRenderer(renderer)) return;
+      for (auto* followedTrail : replacement.followedTrails) {
+        if (!IsAlive(followedTrail)) continue;
+        auto* vivifyRenderer = followedTrail->____trailRenderer.unsafePtr();
+        if (IsAlive(vivifyRenderer) && vivifyRenderer->____meshRenderer.unsafePtr() == renderer) return;
+      }
+      auto found = std::find(replacement.disabledRenderers.begin(), replacement.disabledRenderers.end(), renderer);
+      if (renderer->get_enabled()) {
+        renderer->set_enabled(false);
+        if (found == replacement.disabledRenderers.end()) {
+          replacement.disabledRenderers.emplace_back(renderer);
+          if (GetVivifyDebugLogging()) {
+            auto* gameObject = renderer->get_gameObject().unsafePtr();
+            auto* type = renderer->GetType();
+            VIVIFY_DEBUG("Vivify disabled late saber trail renderer '{}' type='{}'",
+                         IsAlive(gameObject) ? ToStdString(gameObject->get_name()) : std::string("?"),
+                         type != nullptr ? ToStdString(type->get_Name()) : std::string("?"));
+          }
+        }
+      }
+    };
+
+    std::array<UnityEngine::GameObject*, 2> roots{
+        IsAlive(target.controller) ? target.controller->get_gameObject().unsafePtr() : nullptr,
+        IsAlive(target.saber) ? target.saber->get_gameObject().unsafePtr() : nullptr};
+    for (size_t rootIndex = 0; rootIndex < roots.size(); ++rootIndex) {
+      auto* root = roots[rootIndex];
+      if (!IsAlive(root) || (rootIndex > 0 && root == roots[0])) continue;
+      auto renderers = root->GetComponentsInChildren<UnityEngine::Renderer*>(true);
+      for (int i = 0; i < renderers.size(); ++i) disableTrailRenderer(renderers[i]);
+    }
+  }
+  if (scanForNewRenderers) _lastSaberTrailScanFrame = frame;
 }
 
 void Runtime::ReplaceNoteVisuals(GlobalNamespace::NoteController* noteController,
@@ -1238,6 +1308,9 @@ void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
     auto disableTrailRenderer = [this, &replacement](GlobalNamespace::SaberTrailRenderer* trailRenderer) {
       if (!IsAlive(trailRenderer) || !IsAlive(trailRenderer->____meshRenderer.unsafePtr())) return;
       auto* meshRenderer = trailRenderer->____meshRenderer.unsafePtr();
+      for (auto* followedTrail : replacement.followedTrails) {
+        if (IsAlive(followedTrail) && followedTrail->____trailRenderer.unsafePtr() == trailRenderer) return;
+      }
       if (!meshRenderer->get_enabled()) return;
       meshRenderer->set_enabled(false);
       replacement.disabledRenderers.emplace_back(meshRenderer);

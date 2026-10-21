@@ -352,6 +352,7 @@ private:
   void ApplySaberReplacementColor(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                                   VisualReplacement& replacement, bool force = false);
   void UpdateSaberReplacementColors();
+  void ReassertSaberTrailOverrides();
   void ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
                               std::vector<AssignedPrefabInfo*> const& infos, VisualReplacement& replacement);
   void ApplyReplacementRenderersToMaterialBlock(GlobalNamespace::MaterialPropertyBlockController* mpb,
@@ -435,6 +436,7 @@ private:
   std::vector<std::vector<AssignedPrefabInfo*>> _activeDebrisPrefabStack;
   std::vector<AssignedPrefabInfo*> _lastCutDebrisPrefabs;
   std::vector<ActiveSaberVisual> _activeSabers;
+  int _lastSaberTrailScanFrame = -30;
   std::unordered_map<GlobalNamespace::NoteController*, VisualReplacement> _noteReplacements;
   std::unordered_map<GlobalNamespace::SaberModelController*, VisualReplacement> _saberReplacements;
   std::unordered_map<GlobalNamespace::NoteDebris*, VisualReplacement> _debrisReplacements;
