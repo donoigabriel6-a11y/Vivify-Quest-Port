@@ -2,7 +2,7 @@
 
 ### if you have issues please just make a issue and follow issue template
 
-This repo is a port of Vivify [only for PC] to quest! 
+## This repo is a port of Vivify [only for PC] to quest! 
 
 # Features
  an on-device PC → Quest converter, with its own DirectX → GLSL shader
