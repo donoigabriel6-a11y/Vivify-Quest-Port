@@ -20,6 +20,8 @@ conversion cache version, and cached conversions are redone automatically.
 ### Fixed
 - Vivify settings labels and section headers now reserve their own vertical
   space in the scroll view instead of overlapping nearby controls.
+- Non-additive Vivify saber trails now also hide trail renderers added by
+  custom saber models, so those trails do not draw over the map's trail.
 
 ### Performance
 - AudioLink now converts local time only when the clock second changes, rather

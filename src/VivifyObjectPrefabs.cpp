@@ -1235,11 +1235,19 @@ void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
   }
 
   if (!replacement.followedTrails.empty() && ShouldHideOriginal(infos)) {
-    auto* sourceRenderer = sourceTrail->____trailRenderer.unsafePtr();
-    if (IsAlive(sourceRenderer) && sourceRenderer->____meshRenderer && sourceRenderer->____meshRenderer->get_enabled()) {
-      sourceRenderer->____meshRenderer->set_enabled(false);
-      replacement.disabledRenderers.emplace_back(sourceRenderer->____meshRenderer);
+    auto disableTrailRenderer = [this, &replacement](GlobalNamespace::SaberTrailRenderer* trailRenderer) {
+      if (!IsAlive(trailRenderer) || !IsAlive(trailRenderer->____meshRenderer.unsafePtr())) return;
+      auto* meshRenderer = trailRenderer->____meshRenderer.unsafePtr();
+      if (!meshRenderer->get_enabled()) return;
+      meshRenderer->set_enabled(false);
+      replacement.disabledRenderers.emplace_back(meshRenderer);
+    };
+    auto trailRenderers =
+        smc->get_gameObject()->GetComponentsInChildren<GlobalNamespace::SaberTrailRenderer*>(true);
+    for (int i = 0; i < trailRenderers.size(); ++i) {
+      disableTrailRenderer(trailRenderers[i]);
     }
+    disableTrailRenderer(sourceTrail->____trailRenderer.unsafePtr());
   }
 }
 
