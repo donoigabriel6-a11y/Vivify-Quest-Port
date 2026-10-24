@@ -9,6 +9,8 @@
  
   AudioLink [42-flux doesnt work]
 
+  Fixed UI in mod settings.
+  
   # How to install
   1: Download the lastest .qmod from the releases.
   
