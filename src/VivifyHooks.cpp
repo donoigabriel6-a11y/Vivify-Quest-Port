@@ -39,6 +39,11 @@ MAKE_HOOK_MATCH(SaberModelController_Init, &GlobalNamespace::SaberModelControlle
   VivifyPart("SaberModelController.Init", [&] { Runtime::Instance().TrackSaberModel(self, saber, parent); });
 }
 
+MAKE_HOOK_MATCH(SaberTrail_LateUpdate, &GlobalNamespace::SaberTrail::LateUpdate, void, GlobalNamespace::SaberTrail* self) {
+  SaberTrail_LateUpdate(self);
+  VivifyPart("SaberTrail.LateUpdate", [&] { Runtime::Instance().SuppressOriginalSaberTrail(self); });
+}
+
 MAKE_HOOK_MATCH(GameNoteController_Init, &GlobalNamespace::GameNoteController::Init, void, GlobalNamespace::GameNoteController* self, GlobalNamespace::NoteData* noteData, ByRef<GlobalNamespace::NoteSpawnData> noteSpawnData, GlobalNamespace::NoteVisualModifierType noteVisualModifierType, float cutAngleTolerance, float uniformScale) {
   GameNoteController_Init(self, noteData, noteSpawnData, noteVisualModifierType, cutAngleTolerance, uniformScale);
   VivifyPart("GameNoteController.Init", [&] { Runtime::Instance().ApplyNotePrefabFor(self); });
@@ -207,6 +212,7 @@ namespace Vivify {
 void LateLoad() {
   Runtime::Instance().LateLoad();
   INSTALL_HOOK(PaperLogger, SaberModelController_Init);
+  INSTALL_HOOK(PaperLogger, SaberTrail_LateUpdate);
   INSTALL_HOOK(PaperLogger, GameNoteController_Init);
   INSTALL_HOOK(PaperLogger, BombNoteController_Init);
   INSTALL_HOOK(PaperLogger, BurstSliderGameNoteController_Init);
