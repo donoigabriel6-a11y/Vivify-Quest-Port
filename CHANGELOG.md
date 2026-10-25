@@ -11,6 +11,8 @@ conversion cache version, and cached conversions are redone automatically.
 
 ## [Unreleased]
 
+## [0.14.28] - 2026-10-25
+
 ### Added
 - A left-side **Vivify** button on the main menu opens the existing Vivify
   settings page in Mod Settings.
