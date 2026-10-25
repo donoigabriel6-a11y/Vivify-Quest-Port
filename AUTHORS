@@ -1,0 +1,11 @@
+# Vivify Quest Port - Contributors
+
+## Original Authors
+- **Rayla** — Merge of axo-lotl/Vivifhy-Quest, Braxed's Vivify-Quest-Port, and Lars27110's Vivify-Quest
+- **axo-lotl** — CameraEvent-accurate rendering base (Vivifhy-Quest)
+- **Braxed** — Vivify-Quest-Port
+- **Lars27110** — Vivify-Quest
+
+## Contributors
+- **Claude Opus 5.5** — Version 0.14.28 release, settings UI fixes, AudioLink controls, CustomModels saber trail precedence fix, performance improvements
+- **gdono** — Repository maintenance, Quest port improvements
