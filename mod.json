@@ -4,7 +4,7 @@
   "name": "Vivify",
   "id": "vivify",
   "modloader": "Scotland2",
-  "author": "Rayla (merge of axo-lotl/Vivifhy-Quest, Braxed's Vivify-Quest-Port, and Lars27110's Vivify-Quest)",
+  "author": "Rayla (merge of axo-lotl/Vivifhy-Quest, Braxed's Vivify-Quest-Port, and Lars27110's Vivify-Quest), with contributions from Claude Opus 5.5",
   "version": "0.14.28",
   "packageId": "com.beatgames.beatsaber",
   "packageVersion": "1.40.8_7379",
