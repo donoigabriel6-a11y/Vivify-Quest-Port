@@ -113,7 +113,6 @@ void FollowedSaberTrail::InitFollowed(GlobalNamespace::SaberTrail* followed, Uni
     trailRenderer->____meshRenderer->set_material(material);
   }
 
-  Init();
   Update();
   auto gameObject = get_gameObject();
   if (IsManagedAlive(gameObject.unsafePtr())) {
