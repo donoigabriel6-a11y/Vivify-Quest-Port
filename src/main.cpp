@@ -344,6 +344,17 @@ void SetBoolConfigValue(std::string_view key, bool enabled, bool& value) {
   }
   value = enabled;
   config.Write();
+  // Dynamically register/unregister the AudioLink capability so maps requiring
+  // it become playable/unplayable without a game restart.
+  if (key == kAudioLinkConfigKey) {
+    if (enabled) {
+      SongCore::API::Capabilities::RegisterCapability("AudioLink");
+      PaperLogger.info("Vivify: AudioLink capability registered");
+    } else {
+      SongCore::API::Capabilities::UnregisterCapability("AudioLink");
+      PaperLogger.info("Vivify: AudioLink capability unregistered");
+    }
+  }
 }
 
 void SetIntConfigValue(std::string_view key, int newValue, int& value) {
