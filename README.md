@@ -6,7 +6,7 @@ This port brings Vivify's custom shader system to Beat Saber on Meta Quest (Andr
 
 ## Credits
 
-- **Original Vivify** by [Rayla [QuestPort]((https://github.com/trail-b1az3r)) / [vivify-mod](https://github.com/vivify-mod/Vivify)
+- **Original Vivify** by trail-b1az3r / [vivify-mod](https://github.com/vivify-mod/Vivify)
 - **Quest Port** by [GRFN (donoigabriel6-a11y)](https://github.com/donoigabriel6-a11y)
 - **BSAudioLink** by [Aeroluna](https://github.com/Aeroluna/BSAudioLink) (MIT)
 - **AudioLink** by [llealloo](https://github.com/llealloo/vrc-udon-audio-link) (MIT)
