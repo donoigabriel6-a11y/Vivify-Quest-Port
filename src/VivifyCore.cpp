@@ -502,6 +502,9 @@ void Runtime::ResetRuntime(std::string_view reason) {
     WriteLevelEndReport(outcome);
   }
 
+  // Notify AudioLink that the level ended so it can re-acquire the audio source.
+  Vivify::AudioLink::OnLevelEnd();
+
   VIVIFY_DEBUG("Vivify ResetRuntime: livePrefabs={} preloaded={} synced={} secondaryCameras={} declaredTextures={} assets={}",
                _livePrefabs.size(), _instantiatePrefabs.size(), _syncedObjects.size(),
                _secondaryCameras.size(), _declaredTextures.size(), _assets.size());
