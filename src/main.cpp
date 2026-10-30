@@ -11,6 +11,7 @@
 #include <chrono>
 #include <mutex>
 #include <filesystem>
+#include "songcore/shared/SongCore.hpp"
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Transform.hpp"

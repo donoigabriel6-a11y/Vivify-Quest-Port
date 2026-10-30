@@ -2,6 +2,7 @@
 #include <chrono>
 #include <algorithm>
 #include "VivifyComponents.hpp"
+#include "VivifyAudioLink.hpp"
 #include "UnityEngine/ParticleSystem.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
