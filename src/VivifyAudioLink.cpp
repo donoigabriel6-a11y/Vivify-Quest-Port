@@ -400,7 +400,7 @@ void FpsUpdate(State& s) {
 void SendAudio(State& s) {
   auto* source = s.source;
   // Safety check: the managed array might have been GC'd if the level unloaded.
-  if (!s.framesArray.has_value() || !Alive(s.framesArray->ptr())) return;
+  if (!s.framesArray.has_value() || !s.framesArray.value()) return;
   ArrayW<float> frames(static_cast<Array<float>*>(s.framesArray->ptr()));
   source->GetOutputData(frames, 0);
   std::copy(frames.begin(), frames.end(), s.framesL.begin());
@@ -478,7 +478,7 @@ void Update(State& s) {
     // No audio source available (e.g., between menu and gameplay).
     // Send silent audio data to avoid stale visualization.
     // Safety check: the managed array might have been GC'd if the level unloaded.
-    if (s.samples.has_value() && Alive(s.samples->ptr())) {
+    if (s.samples.has_value() && s.samples.value()) {
       ArrayW<float> samples(static_cast<Array<float>*>(s.samples->ptr()));
       for (int i = 0; i < 4; i++) {
         for (int j = 0; j < kSamplesPerArray; j++) samples[j] = 0.0f;
