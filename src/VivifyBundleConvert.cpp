@@ -1,7 +1,25 @@
 #include "VivifyBundleConvert.hpp"
 #include "VivifySerializedFile.hpp"
 #include "VivifyDxbc.hpp"
+
+// PaperLogger is only available in the full mod build (has scotland2 dependency).
+// For host tests, provide a no-op fallback.
+#if defined(VIVIFY_TEST_BUILD) || !__has_include(<paper2_scotland2/shared/logger.hpp>)
+namespace Paper {
+struct ConstLoggerContext {
+  constexpr ConstLoggerContext(char const*) {}
+  template<typename... Args>
+  void warn(Args&&...) const {}
+  template<typename... Args>
+  void info(Args&&...) const {}
+  template<typename... Args>
+  void error(Args&&...) const {}
+};
+}
+constexpr auto PaperLogger = Paper::ConstLoggerContext("Vivify");
+#else
 #include "main.hpp"
+#endif
 
 #include <algorithm>
 #include <map>

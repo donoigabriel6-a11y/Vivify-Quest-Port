@@ -225,8 +225,8 @@ bool IsBlankRgba32(uint8_t const* rgba, size_t size) {
     if (rgba[i + 3] != 0) anyOpacity = true;
     if (anyColour && anyOpacity) return false;
   }
-  // Only "blank" if fully transparent black (no colour AND no opacity)
-  return !anyColour && !anyOpacity;
+  // Blank if either no colour at all, or no opacity at all (or both)
+  return !anyColour || !anyOpacity;
 }
 
 }
