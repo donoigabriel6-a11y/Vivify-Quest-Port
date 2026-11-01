@@ -1,7 +1,7 @@
 #include "VivifyBundleConvert.hpp"
 #include "VivifySerializedFile.hpp"
 #include "VivifyDxbc.hpp"
-#include "../include/main.hpp"
+#include "main.hpp"
 
 #include <algorithm>
 #include <map>
