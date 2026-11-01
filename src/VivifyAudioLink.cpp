@@ -511,7 +511,7 @@ void Update(State& s) {
   float const volume = s.source->get_volume();
   s.material->SetFloat(s.ids.sourceVolume, volume);
   s.material->SetFloat(s.ids.sourceSpatialBlend, 0.0f);
-  auto* transform = s.source->get_transform();
+  auto transform = s.source->get_transform();
   if (Alive(transform)) {
     auto const position = transform->get_position();
     s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{position.x, position.y, position.z, 0.0f});

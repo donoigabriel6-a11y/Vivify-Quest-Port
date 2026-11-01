@@ -2178,42 +2178,37 @@ std::string GlslEmitter::ConstantComponent(Operand const& operand, int component
     return {};
   }
   auto const& found = variables[foundIndex];
-  if (found == nullptr) {
-    Fail("the shader reads b" + std::to_string(bindPoint) + " at byte " +
-         std::to_string(byteOffset) + ", which no declared variable covers");
-    return {};
-  }
 
   std::string expression;
   if (rowIndex.hasRelative && rowIndex.relative) {
     // A dynamically indexed constant buffer only makes sense as an array
     // variable; anything else would be reading across variable boundaries at
     // run time, which the named-uniform model cannot express.
-    if (!found->isArray) {
+    if (!found.isArray) {
       Fail("the shader indexes b" + std::to_string(bindPoint) +
-           " dynamically, but the variable at that offset ('" + found->name +
+           " dynamically, but the variable at that offset ('" + found.name +
            "') is not an array");
       return {};
     }
     std::string index = ScalarInt(*rowIndex.relative);
-    int64_t const base = static_cast<int64_t>(found->startOffset / 16u);
+    int64_t const base = static_cast<int64_t>(found.startOffset / 16u);
     int64_t const bias = static_cast<int64_t>(rowIndex.immediate) - base;
     if (bias != 0) {
       index += (bias > 0 ? " + " : " - ") + std::to_string(bias > 0 ? bias : -bias);
     }
-    expression = found->name + "[" + index + "]." + kComponentNames[component];
-  } else if (found->isArray) {
-    uint32_t const withinVariable = byteOffset - found->startOffset;
-    expression = found->name + "[" + std::to_string(withinVariable / found->elementStride) + "]." +
-                 kComponentNames[(withinVariable % found->elementStride) / 4u];
-  } else if (found->scalarDeclaration) {
-    expression = found->name;
+    expression = found.name + "[" + index + "]." + kComponentNames[component];
+  } else if (found.isArray) {
+    uint32_t const withinVariable = byteOffset - found.startOffset;
+    expression = found.name + "[" + std::to_string(withinVariable / found.elementStride) + "]." +
+                 kComponentNames[(withinVariable % found.elementStride) / 4u];
+  } else if (found.scalarDeclaration) {
+    expression = found.name;
   } else {
-    uint32_t const withinVariable = byteOffset - found->startOffset;
-    expression = found->name + "." + kComponentNames[withinVariable / 4u];
+    uint32_t const withinVariable = byteOffset - found.startOffset;
+    expression = found.name + "." + kComponentNames[withinVariable / 4u];
   }
 
-  if (found->integerTyped) expression = "intBitsToFloat(" + expression + ")";
+  if (found.integerTyped) expression = "intBitsToFloat(" + expression + ")";
   return expression;
 }
 

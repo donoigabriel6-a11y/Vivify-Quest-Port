@@ -1,6 +1,7 @@
 #include "VivifyTextureDecode.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #define BCDEC_IMPLEMENTATION 1
