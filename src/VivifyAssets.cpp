@@ -2925,7 +2925,7 @@ UnityEngine::Texture* Runtime::ResolveUsableTexture(UnityEngine::Texture* textur
   constexpr size_t kMaxDecodedTextures = 512;
   if (_decodedTextures.size() >= kMaxDecodedTextures) {
     // Remove dead entries first
-    std::erase_if(_decodedTextures, [](auto const& kv) { return !IsAlive(kv.second); });
+    std::erase_if(_decodedTextures, [this](auto const& kv) { return !IsAlive(kv.second); });
     // If still too large, remove oldest entries (map iteration order is insertion order in C++11+ for unordered_map)
     if (_decodedTextures.size() >= kMaxDecodedTextures) {
       size_t toRemove = _decodedTextures.size() - kMaxDecodedTextures / 2;
