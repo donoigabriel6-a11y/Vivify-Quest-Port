@@ -70,7 +70,7 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         head_len = 20
     meta = bytearray()
     meta += unity.encode() + b"\0"
-    meta += struct.pack('<i', target)
+    meta += struct.pack('>i', target)  # target platform in file endianness (big-endian)
     meta += b"\x00"                       # m_EnableTypeTree
     meta += bytes(payload_len)            # stand-in for the rest of the metadata+data
     total = head_len + len(meta)
@@ -81,7 +81,7 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', 0)            # legacy fileSize
         body += struct.pack('>I', version)
         body += struct.pack('>I', 0)            # legacy dataOffset
-        body += b'\x00' + b'\x00\x00\x00'       # little-endian + reserved
+        body += b'\x00' + b'\x00\x00\x00'       # endianness=0 (big-endian) + reserved
         body += struct.pack('>I', metadata_size)
         body += struct.pack('>Q', total)
         body += struct.pack('>Q', data_offset)
@@ -91,7 +91,7 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', total)
         body += struct.pack('>I', version)
         body += struct.pack('>I', data_offset)
-        body += b'\x00' + b'\x00\x00\x00'
+        body += b'\x00' + b'\x00\x00\x00'       # endianness=0 (big-endian) + reserved
     body += meta
     assert len(body) == total, (len(body), total)
     return bytes(body)

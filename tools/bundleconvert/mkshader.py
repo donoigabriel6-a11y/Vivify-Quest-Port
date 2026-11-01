@@ -388,7 +388,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
     head_len = 48 if sf_version >= 22 else 20
     meta = bytearray()
     meta += unity.encode() + b"\0"
-    meta += struct.pack('<i', target)
+    meta += struct.pack('>i', target)  # target platform in file endianness (big-endian)
     meta += b'\x01' if enable_type_tree else b'\x00'
     meta += types
     meta += struct.pack('<i', len(bodies))
