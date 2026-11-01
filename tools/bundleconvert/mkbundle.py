@@ -73,9 +73,12 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
     meta += struct.pack('>i', target)  # target platform in file endianness (big-endian)
     meta += b"\x00"                       # m_EnableTypeTree
     meta += bytes(payload_len)            # stand-in for the rest of the metadata+data
-    total = head_len + len(meta)
-    data_offset = head_len + 16
     metadata_size = len(meta)
+    # Data section starts after metadata, aligned to 16 bytes for version >= 7
+    data_offset = head_len + metadata_size
+    if version >= 7:
+        data_offset = (data_offset + 15) & ~15
+    total = data_offset  # for our synthetic files, data section is empty
     if version >= 22:
         body += struct.pack('>I', 0)            # legacy metadataSize
         body += struct.pack('>I', 0)            # legacy fileSize
@@ -93,6 +96,9 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', data_offset)
         body += b'\x00' + b'\x00\x00\x00'       # endianness=0 (big-endian) + reserved
     body += meta
+    # Pad to data_offset
+    while len(body) < data_offset:
+        body.append(0)
     assert len(body) == total, (len(body), total)
     return bytes(body)
 
