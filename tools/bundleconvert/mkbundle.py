@@ -78,7 +78,9 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
     data_offset = head_len + metadata_size
     if version >= 7:
         data_offset = (data_offset + 15) & ~15
-    total = data_offset  # for our synthetic files, data section is empty
+    # Add dummy data section so that metadata_size <= data_size (validation check)
+    data_size = metadata_size
+    total = data_offset + data_size
     if version >= 22:
         body += struct.pack('>I', 0)            # legacy metadataSize
         body += struct.pack('>I', 0)            # legacy fileSize
@@ -99,6 +101,8 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
     # Pad to data_offset
     while len(body) < data_offset:
         body.append(0)
+    # Add dummy data section
+    body += bytes(data_size)
     assert len(body) == total, (len(body), total)
     return bytes(body)
 
