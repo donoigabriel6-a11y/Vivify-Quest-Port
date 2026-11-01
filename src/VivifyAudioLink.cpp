@@ -272,6 +272,8 @@ bool Load(State& s) {
   bundle->Unload(false);
   if (!Alive(material) || !Alive(texture)) {
     PaperLogger.warn("Vivify AudioLink: the bundle has no AudioLink material or texture");
+    if (Alive(material)) UnityEngine::Object::Destroy(material);
+    if (Alive(texture)) UnityEngine::Object::Destroy(texture);
     return false;
   }
   // Nothing managed references these once the bundle is gone, and a scene
@@ -281,6 +283,10 @@ bool Load(State& s) {
   auto* shader = material->get_shader().unsafePtr();
   if (!Alive(shader) || !shader->get_isSupported()) {
     PaperLogger.warn("Vivify AudioLink: this GPU rejects the AudioLink shader; AudioLink stays off");
+    material->set_hideFlags(UnityEngine::HideFlags::None);
+    texture->set_hideFlags(UnityEngine::HideFlags::None);
+    UnityEngine::Object::Destroy(material);
+    UnityEngine::Object::Destroy(texture);
     return false;
   }
   s.material = material;
@@ -339,8 +345,11 @@ void FindSource(State& s) {
   if (Alive(s.source) && s.source->get_isPlaying()) return;
   // If the source died or stopped playing, search immediately (no cooldown).
   // Only apply the 30-frame cooldown if we have a live source that's just paused.
+  // If we have no source at all, also apply a cooldown to avoid hammering
+  // FindObjectOfType every frame when no audio source exists in the scene.
   bool const hasLiveSource = Alive(s.source);
-  if (hasLiveSource && frame - s.lastSourceSearchFrame < 30) return;
+  int const cooldown = hasLiveSource ? 30 : 60;  // longer cooldown when no source found
+  if (frame - s.lastSourceSearchFrame < cooldown) return;
   s.lastSourceSearchFrame = frame;
   s.source = nullptr;
   GlobalNamespace::ColorScheme* scheme = nullptr;
@@ -502,8 +511,13 @@ void Update(State& s) {
   float const volume = s.source->get_volume();
   s.material->SetFloat(s.ids.sourceVolume, volume);
   s.material->SetFloat(s.ids.sourceSpatialBlend, 0.0f);
-  auto const position = s.source->get_transform()->get_position();
-  s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{position.x, position.y, position.z, 0.0f});
+  auto* transform = s.source->get_transform();
+  if (Alive(transform)) {
+    auto const position = transform->get_position();
+    s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{position.x, position.y, position.z, 0.0f});
+  } else {
+    s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{0, 0, 0, 0});
+  }
   // AudioLink.cs autoSetMediaState.
   s.material->SetFloat(s.ids.mediaVolume, volume);
   float time = 0.0f;

@@ -82,7 +82,7 @@ void DecodeBlock(Format format, uint8_t const* src, uint8_t* dst, int pitch) {
           uint8_t* pixel = dst + (y * pitch) + (x * kRgbaChannels);
           for (int c = 0; c < 3; c++) {
             float value = rgb[(y * 12) + (x * 3) + c];
-            if (!(value > 0.0f)) value = 0.0f;          // also catches NaN
+            if (!(value > 0.0f) || !std::isfinite(value)) value = 0.0f;  // catches NaN, +Inf, -Inf
             value = value / (value + 1.0f);             // Reinhard
             pixel[c] = static_cast<uint8_t>(std::min(255.0f, (value * 255.0f) + 0.5f));
           }
@@ -224,7 +224,8 @@ bool IsBlankRgba32(uint8_t const* rgba, size_t size) {
     if (rgba[i + 3] != 0) anyOpacity = true;
     if (anyColour && anyOpacity) return false;
   }
-  return !(anyColour && anyOpacity);
+  // Only "blank" if fully transparent black (no colour AND no opacity)
+  return !anyColour && !anyOpacity;
 }
 
 }

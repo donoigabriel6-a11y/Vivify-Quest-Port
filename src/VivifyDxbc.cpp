@@ -509,7 +509,7 @@ constexpr uint32_t kIndexImmediate64PlusRelative = 4;
 // `depth` stops a crafted stream from recursing without bound: real bytecode
 // nests one level (cb0[r0.x]), never more.
 bool DecodeOperand(Reader& reader, Operand& operand, int depth) {
-  if (depth > 3) return false;
+  if (depth > 1) return false;
   uint32_t const token = reader.U32();
   if (!reader.Ok()) return false;
 
@@ -565,9 +565,7 @@ bool DecodeOperand(Reader& reader, Operand& operand, int depth) {
     return true;
   }
   if (operand.type == kOperandImmediate64) {
-    uint32_t const count = operand.numComponents == 1 ? 2u : 8u;
-    for (uint32_t i = 0; i < count; i++) reader.U32();
-    return reader.Ok();
+    return false;  // 64-bit immediates (double precision) are not supported
   }
 
   operand.indices.resize(indexDimension);
@@ -1401,6 +1399,7 @@ bool GlslEmitter::BuildConstantBuffers() {
       MappedVariable entry;
       entry.name = "vivify_cb_" + buffer.name;
       entry.startOffset = 0;
+      // rows <= 4096, so rows * 16u <= 65536, fits in uint32_t
       entry.size = rows * 16u;
       entry.isArray = true;
       entry.elementStride = 16;
@@ -1523,7 +1522,13 @@ bool GlslEmitter::BuildConstantBuffers() {
           entry.declaration = _stereoEyeIndexType + " " + entry.name + ";";
         }
       }
-      entry.elementStride = entry.elementStride == 0 ? 16 : entry.elementStride;
+      if (entry.elementStride == 0) {
+        entry.elementStride = 16;
+      } else if (entry.elementStride % 4 != 0 || entry.elementStride > 256) {
+        Fail("constant buffer variable '" + entry.name + "' has invalid elementStride " +
+             std::to_string(entry.elementStride));
+        return false;
+      }
       entry.componentCount = entry.componentCount == 0 ? 1 : entry.componentCount;
       entry.integerTyped = integerTyped;
       mapped.push_back(std::move(entry));
@@ -1613,6 +1618,12 @@ bool GlslEmitter::BuildResources() {
                            " { uint " + binding.name + "[]; };\n";
         }
         auto& into = (binding.type == 5 || binding.type == 7) ? _rawResources : _storage;
+        if (binding.bindPoint > 64) {
+          Fail("storage buffer bound at register " +
+               std::string(binding.type == 5 || binding.type == 7 ? "t" : "u") +
+               std::to_string(binding.bindPoint));
+          return false;
+        }
         if (into.size() <= binding.bindPoint) into.resize(binding.bindPoint + 1);
         into[binding.bindPoint] = std::move(storage);
         continue;
@@ -1879,7 +1890,13 @@ bool GlslEmitter::BuildStageDeclarations() {
             return false;
           }
           block.stride = instruction.extra[0];
-          block.elements = instruction.extra[1] * (block.stride / 4u);
+          // Check for overflow: elements = count * (stride / 4)
+          uint32_t const strideDwords = block.stride / 4u;
+          if (strideDwords != 0 && instruction.extra[1] > UINT32_MAX / strideDwords) {
+            Fail("shared memory block size would overflow");
+            return false;
+          }
+          block.elements = instruction.extra[1] * strideDwords;
         }
         if (block.elements == 0 || block.elements > (1u << 20)) {
           Fail("a shared memory block of an impossible size");
@@ -2131,16 +2148,36 @@ std::string GlslEmitter::ConstantComponent(Operand const& operand, int component
   }
   auto const& variables = _constantBuffers[bindPoint];
   OperandIndex const& rowIndex = operand.indices[1];
-  uint32_t const byteOffset =
-      static_cast<uint32_t>(rowIndex.immediate) * 16u + static_cast<uint32_t>(component) * 4u;
+  // rowIndex.immediate is uint64_t; check it fits in uint32_t before using
+  if (rowIndex.immediate > UINT32_MAX) {
+    Fail("constant buffer row index exceeds 32-bit range");
+    return {};
+  }
+  uint32_t const row = static_cast<uint32_t>(rowIndex.immediate);
+  // Check for overflow: row * 16 + component * 4
+  if (row > UINT32_MAX / 16u) {
+    Fail("constant buffer byte offset would overflow");
+    return {};
+  }
+  uint32_t const byteOffset = row * 16u + static_cast<uint32_t>(component) * 4u;
 
-  MappedVariable const* found = nullptr;
-  for (auto const& variable : variables) {
+  // Use index-based lookup to avoid pointer invalidation if vector reallocates
+  size_t foundIndex = variables.size();
+  for (size_t i = 0; i < variables.size(); i++) {
+    auto const& variable = variables[i];
+    // Check for overflow in variable.startOffset + variable.size
+    if (variable.size > UINT32_MAX - variable.startOffset) continue; // malformed, skip
     if (byteOffset >= variable.startOffset && byteOffset < variable.startOffset + variable.size) {
-      found = &variable;
+      foundIndex = i;
       break;
     }
   }
+  if (foundIndex == variables.size()) {
+    Fail("the shader reads b" + std::to_string(bindPoint) + " at byte " +
+         std::to_string(byteOffset) + ", which no declared variable covers");
+    return {};
+  }
+  auto const& found = variables[foundIndex];
   if (found == nullptr) {
     Fail("the shader reads b" + std::to_string(bindPoint) + " at byte " +
          std::to_string(byteOffset) + ", which no declared variable covers");
@@ -2202,6 +2239,11 @@ std::string GlslEmitter::SrcBase(Operand const& operand, uint8_t mask) {
       text += parts[i];
     }
     return text + ")";
+  }
+
+  if (operand.type == kOperandImmediate64) {
+    Fail("64-bit immediate operands (double precision) are not supported");
+    return {};
   }
 
   if (operand.type == kOperandConstantBuffer || operand.type == kOperandImmediateConstantBuffer) {
@@ -2801,6 +2843,10 @@ bool GlslEmitter::EmitInstruction(Instruction const& instruction) {
                                      int component) -> std::string {
     MappedStorage const* storage = StorageFor(resourceOperand);
     if (storage == nullptr) return {};
+    // Note: The generated GLSL code computes (element * stride + byteOffset) >> 2.
+    // This multiplication could overflow at runtime in the shader if element and
+    // stride are both large. GLSL ES has no 64-bit integers, so we cannot prevent
+    // this in the translator; the shader author must ensure offsets stay in range.
     std::string index;
     if (second == nullptr) {
       // Raw: a single byte address.
@@ -2912,6 +2958,10 @@ bool GlslEmitter::EmitInstruction(Instruction const& instruction) {
     // byte offset for a structured one; both reduce to a dword index.
     Operand const& address = operands[addressIndex];
     std::string index;
+    // Note: The generated GLSL code computes (address.x * stride + address.y) >> 2.
+    // This multiplication could overflow at runtime in the shader if address.x and
+    // stride are both large. GLSL ES has no 64-bit integers, so we cannot prevent
+    // this in the translator; the shader author must ensure offsets stay in range.
     if (address.numComponents == 4 && PopCount4(address.mask == 0 ? 0xf : address.mask) > 1 &&
         storage->stride > 4) {
       index = "(((" + SrcUint(address, 0x1) + " * " + std::to_string(storage->stride) + "u) + " +
