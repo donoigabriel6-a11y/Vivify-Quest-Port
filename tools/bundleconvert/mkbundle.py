@@ -86,7 +86,7 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', 0)            # legacy fileSize
         body += struct.pack('>I', version)
         body += struct.pack('>I', 0)            # legacy dataOffset
-        body += b'\x00' + b'\x00\x00\x00'       # endianness=0 (big-endian) + reserved
+        body += b'\x01' + b'\x00\x00\x00'       # endianness=1 (converter expects 1=big-endian) + reserved
         body += struct.pack('>I', metadata_size)
         body += struct.pack('>Q', total)
         body += struct.pack('>Q', data_offset)
@@ -96,7 +96,7 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', total)
         body += struct.pack('>I', version)
         body += struct.pack('>I', data_offset)
-        body += b'\x00' + b'\x00\x00\x00'       # endianness=0 (big-endian) + reserved
+        body += b'\x01' + b'\x00\x00\x00'       # endianness=1 (converter expects 1=big-endian) + reserved
     body += meta
     # Pad to data_offset
     while len(body) < data_offset:

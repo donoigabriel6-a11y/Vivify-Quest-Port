@@ -391,20 +391,20 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
     meta += struct.pack('>i', target)  # target platform in file endianness (big-endian)
     meta += b'\x01' if enable_type_tree else b'\x00'
     meta += types
-    meta += struct.pack('<i', len(bodies))
+    meta += struct.pack('>i', len(bodies))
     for i, (start, size) in enumerate(placements):
         while (head_len + len(meta)) % 4:
             meta.append(0)
-        meta += struct.pack('<q', i + 1)             # pathID
+        meta += struct.pack('>q', i + 1)             # pathID
         if sf_version >= 22:
-            meta += struct.pack('<q', start)
+            meta += struct.pack('>q', start)
         else:
-            meta += struct.pack('<i', start)
-        meta += struct.pack('<I', size)
-        meta += struct.pack('<i', type_indices[i])
-    meta += struct.pack('<i', 0)                     # script types
-    meta += struct.pack('<i', 0)                     # externals
-    meta += struct.pack('<i', 0)                     # ref types
+            meta += struct.pack('>i', start)
+        meta += struct.pack('>I', size)
+        meta += struct.pack('>i', type_indices[i])
+    meta += struct.pack('>i', 0)                     # script types
+    meta += struct.pack('>i', 0)                     # externals
+    meta += struct.pack('>i', 0)                     # ref types
     meta += b'\0'                                    # user information
 
     metadata_size = len(meta)
@@ -423,7 +423,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
     body = bytearray()
     if sf_version >= 22:
         body += struct.pack('>IIII', 0, 0, sf_version, 0)
-        body += b'\x00\x00\x00\x00'
+        body += b'\x01\x00\x00\x00'  # endianness=1 (converter expects 1=big-endian) + reserved
         body += struct.pack('>I', metadata_size)
         body += struct.pack('>Q', total)
         body += struct.pack('>Q', data_offset)
@@ -433,7 +433,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
         body += struct.pack('>I', total)
         body += struct.pack('>I', sf_version)
         body += struct.pack('>I', data_offset)
-        body += b'\x00\x00\x00\x00'
+        body += b'\x01\x00\x00\x00'  # endianness=1 (converter expects 1=big-endian) + reserved
     body += meta
     while len(body) < data_offset:
         body.append(0)
