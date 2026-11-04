@@ -222,4 +222,4 @@ def target_of(data, off, size, sf_version):
     p = off + head_len
     e = data.index(b"\0", p)
     p = e + 1
-    return struct.unpack_from('<i', data, p)[0]
+    return struct.unpack_from('>i', data, p)[0]
