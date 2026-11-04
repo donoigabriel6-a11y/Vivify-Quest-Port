@@ -2,11 +2,11 @@ name: Build Quest Mod
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [ main, master, "GRFN's-Vivify" ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, "GRFN's-Vivify" ]
   workflow_dispatch:
     inputs:
       version:
