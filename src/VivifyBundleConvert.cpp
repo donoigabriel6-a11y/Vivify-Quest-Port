@@ -876,7 +876,13 @@ TargetPlatformField FindTargetPlatform(uint8_t const* data, size_t dataSize, siz
   if (fileSize == 0 || fileSize > nodeSize) return field;
   if (dataOffset == 0 || dataOffset > fileSize) return field;
   if (metadataSize == 0 || metadataSize > fileSize) return field;
-  if (dataOffset + metadataSize > fileSize || dataOffset + metadataSize > static_cast<uint64_t>(nodeSize)) return field;
+  // metadataSize is a byte count beginning immediately after the SerializedFile header;
+  // dataOffset is already an absolute offset from the start of the file.
+  // Adding metadataSize to dataOffset double-counts the metadata and rejects
+  // valid SerializedFiles (including Unity 2021 bundles).
+  size_t const headerSize = reader.position();
+  if (headerSize > dataOffset || metadataSize > dataOffset - headerSize || dataOffset > fileSize ||
+      dataOffset > static_cast<uint64_t>(nodeSize)) return field;
   if (version >= 7) {
     std::string const unityVersion = reader.cstring(64);
     if (!reader.ok() || unityVersion.empty()) return field;
