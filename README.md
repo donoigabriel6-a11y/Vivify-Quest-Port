@@ -1,9 +1,9 @@
+[`Discord`](https://discord.gg/BzjvddRcbn)
 # Vivify Quest Port
 
 A Quest/Android port of [Vivify](https://github.com/vivify-mod/Vivify) — a Beat Saber mod that lets custom shaders run via Unity asset bundles.
 
 This port brings Vivify's custom shader system to Beat Saber on Meta Quest (Android), with an on-device PC→Quest bundle converter and DirectX→GLSL shader translator.
-[`Discord`](https://discord.gg/BzjvddRcbn)
 ## Credits
 
 - **Original Vivify Port** by trail-b1az3r 
