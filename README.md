@@ -319,8 +319,15 @@ including a glslang compile of every translated program.
   BSML, beatsaber-hook, bs-cordl and QPM.
 - [Beat Saber Modding Group](https://bsmg.wiki) documentation.
 
-**Testers**
-- ME
-- people who made issues 
-**Special thanks to:**
--  ProgrammingEnthusiast78: for quick bug reporting
+
+### **Testers**
+
+- users who made issues 
+
+### **Special thanks to:**
+-  ProgrammingEnthusiast78/Fenzo: for quick bug reporting, with detailed explanations
+
+
+
+## Disclamer
+***This project was use with heavy help/asssitance with claude code**
