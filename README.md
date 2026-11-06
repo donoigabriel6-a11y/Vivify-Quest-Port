@@ -108,10 +108,10 @@ If you genuinely cannot access `VivifySession.txt`, say so in the issue. Do not 
 **TL;DR:** Send `VivifySession.txt`, `VivifyReport.txt`, and every available `vivify_global*.txt` file. Include `logs2/` for crashes and Logcat only as additional system-level evidence. The global log preserves earlier sessions; Logcat is not a replacement for Vivify's own logs.
 
 </details>
-#Vivify Quest
+# Vivify Quest!
 
 
-personally i recommend version 0.15.3-2 nightly
+-# personally i recommend version 0.15.3-2 nightly
 
 A Quest port of [Vivify](https://github.com/Aeroluna/Vivify) for **Beat Saber
 1.40.8**. It plays Vivify maps on the headset, including maps that were only
