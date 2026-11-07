@@ -388,7 +388,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
     head_len = 48 if sf_version >= 22 else 20
     meta = bytearray()
     meta += unity.encode() + b"\0"
-    meta += struct.pack('<i', target)
+    meta += struct.pack('<i', target)  # target platform follows the little-endian flag below
     meta += b'\x01' if enable_type_tree else b'\x00'
     meta += types
     meta += struct.pack('<i', len(bodies))
@@ -423,7 +423,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
     body = bytearray()
     if sf_version >= 22:
         body += struct.pack('>IIII', 0, 0, sf_version, 0)
-        body += b'\x00\x00\x00\x00'
+        body += b'\x00\x00\x00\x00'  # endianness=0 (little-endian) + reserved
         body += struct.pack('>I', metadata_size)
         body += struct.pack('>Q', total)
         body += struct.pack('>Q', data_offset)
@@ -433,7 +433,7 @@ def serialized_file_with_shaders(shaders, *, sf_version=21, target=19,
         body += struct.pack('>I', total)
         body += struct.pack('>I', sf_version)
         body += struct.pack('>I', data_offset)
-        body += b'\x00\x00\x00\x00'
+        body += b'\x00\x00\x00\x00'  # endianness=0 (little-endian) + reserved
     body += meta
     while len(body) < data_offset:
         body.append(0)

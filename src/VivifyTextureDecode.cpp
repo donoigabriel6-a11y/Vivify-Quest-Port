@@ -1,6 +1,7 @@
 #include "VivifyTextureDecode.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 
 #define BCDEC_IMPLEMENTATION 1
@@ -82,7 +83,7 @@ void DecodeBlock(Format format, uint8_t const* src, uint8_t* dst, int pitch) {
           uint8_t* pixel = dst + (y * pitch) + (x * kRgbaChannels);
           for (int c = 0; c < 3; c++) {
             float value = rgb[(y * 12) + (x * 3) + c];
-            if (!(value > 0.0f)) value = 0.0f;          // also catches NaN
+            if (!(value > 0.0f) || !std::isfinite(value)) value = 0.0f;  // catches NaN, +Inf, -Inf
             value = value / (value + 1.0f);             // Reinhard
             pixel[c] = static_cast<uint8_t>(std::min(255.0f, (value * 255.0f) + 0.5f));
           }
@@ -224,7 +225,8 @@ bool IsBlankRgba32(uint8_t const* rgba, size_t size) {
     if (rgba[i + 3] != 0) anyOpacity = true;
     if (anyColour && anyOpacity) return false;
   }
-  return !(anyColour && anyOpacity);
+  // Blank if either no colour at all, or no opacity at all (or both)
+  return !anyColour || !anyOpacity;
 }
 
 }

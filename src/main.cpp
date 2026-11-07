@@ -1,12 +1,14 @@
 #include "main.hpp"
 #include "VivifyGlobalLog.hpp"
 #include <algorithm>
+#include "VivifyAudioLink.hpp"
 #include <ctime>
 #include <cerrno>
 #include <cstring>
 #include "VivifyRuntime.hpp"
 #include "VivifyReport.hpp"
 #include "VivifyRecovery.hpp"
+#include <cmath>
 #include <string>
 #include <string_view>
 #include <fstream>
@@ -14,9 +16,12 @@
 #include <atomic>
 #include <mutex>
 #include <filesystem>
+#include "songcore/shared/SongCore.hpp"
 #include "HMUI/ViewController.hpp"
 #include "UnityEngine/GameObject.hpp"
 #include "UnityEngine/Transform.hpp"
+#include "bsml/shared/BSML.hpp"
+#include "bsml/shared/BSML/SharedCoroutineStarter.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Buttons.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Layout.hpp"
 #include "bsml/shared/BSML-Lite/Creation/Settings.hpp"
@@ -28,10 +33,12 @@
 #include "UnityEngine/RectTransform.hpp"
 #include "UnityEngine/UI/LayoutElement.hpp"
 #include "bsml/shared/BSML/Settings/BSMLSettings.hpp"
+#include "bsml/shared/BSML/Settings/SettingsMenu.hpp"
 #include "custom-types/shared/register.hpp"
 #include "scotland2/shared/modloader.h"
 #include <dlfcn.h>
 #include <vector>
+#include "UnityEngine/WaitForEndOfFrame.hpp"
 
 static modloader::ModInfo modInfo{MOD_ID, VERSION, 0};
 // A rebuild of the same version, shown beside it in the menu and the logs.
@@ -56,6 +63,9 @@ constexpr std::string_view kSceneDepthConfigKey = "sceneDepthTexture";
 constexpr std::string_view kSubmitScoresConfigKey = "submitScoresOnVivifyMaps";
 constexpr std::string_view kTranslateShadersConfigKey = "translateShadersOnConversion";
 constexpr std::string_view kAudioLinkConfigKey = "audioLink";
+constexpr std::string_view kAudioLinkGainConfigKey = "audioLinkGain";
+constexpr std::string_view kAudioLinkBassConfigKey = "audioLinkBass";
+constexpr std::string_view kAudioLinkTrebleConfigKey = "audioLinkTreble";
 constexpr std::string_view kMapRealtimeShadowsConfigKey = "mapRealtimeShadows";
 // On by default again since 0.15.3, reduced (see VivifyObjectPrefabs.cpp's
 // ReduceReflectionProbes) unless "Full Reflection Probes" is on. A new key, so
@@ -126,6 +136,9 @@ bool gSubmitScores = true;
 // reconvert.
 bool gTranslateShaders = true;
 bool gAudioLink = true;
+float gAudioLinkGain = 1.0f;
+float gAudioLinkBass = 1.0f;
+float gAudioLinkTreble = 1.0f;
 bool gMapRealtimeShadows = false;
 bool gMapReflectionProbes = true;
 bool gFullReflectionProbes = false;
@@ -362,6 +375,28 @@ bool EnsureIntConfigValue(std::string_view key, int defaultValue, int minValue, 
   return true;
 }
 
+bool EnsureFloatConfigValue(std::string_view key, float defaultValue, float minValue, float maxValue,
+                            float& value) {
+  auto& doc = getConfig().config;
+  auto it = doc.FindMember(key.data());
+  if (it != doc.MemberEnd() && it->value.IsNumber()) {
+    double const stored = it->value.GetDouble();
+    if (std::isfinite(stored) && stored >= minValue && stored <= maxValue) {
+      value = static_cast<float>(stored);
+      return false;
+    }
+  }
+
+  auto& allocator = doc.GetAllocator();
+  value = defaultValue;
+  if (it == doc.MemberEnd()) {
+    doc.AddMember(rapidjson::Value(key.data(), allocator), rapidjson::Value(defaultValue), allocator);
+  } else {
+    it->value.SetFloat(defaultValue);
+  }
+  return true;
+}
+
 bool EnsureBoolConfigValue(std::string_view key, bool defaultValue, bool& value) {
   auto& doc = getConfig().config;
   auto it = doc.FindMember(key.data());
@@ -410,6 +445,17 @@ void SetBoolConfigValue(std::string_view key, bool enabled, bool& value) {
   }
   value = enabled;
   config.Write();
+  // Dynamically register/unregister the AudioLink capability so maps requiring
+  // it become playable/unplayable without a game restart.
+  if (key == kAudioLinkConfigKey) {
+    if (enabled) {
+      SongCore::API::Capabilities::RegisterCapability("AudioLink");
+      PaperLogger.info("Vivify: AudioLink capability registered");
+    } else {
+      SongCore::API::Capabilities::UnregisterCapability("AudioLink");
+      PaperLogger.info("Vivify: AudioLink capability unregistered");
+    }
+  }
 }
 
 // "Use Windows Bundle For This Map" (0.14.29): song folder names whose PC
@@ -441,6 +487,32 @@ void SetIntConfigValue(std::string_view key, int newValue, int& value) {
   }
   value = newValue;
   config.Write();
+}
+
+bool SetFloatConfigValue(std::string_view key, float newValue, float& value) {
+  if (!std::isfinite(newValue)) {
+    PaperLogger.warn("Vivify settings: ignoring a non-finite value for '{}'", key);
+    return false;
+  }
+  if (gSettingsMenuBuilding) {
+    PaperLogger.info("Vivify settings: ignoring a '{}' change to {} that arrived while the menu was "
+                     "still being built",
+                     key, newValue);
+    return false;
+  }
+  auto& config = getConfig();
+  auto& doc = config.config;
+  EnsureConfigObject();
+  auto& allocator = doc.GetAllocator();
+  auto it = doc.FindMember(key.data());
+  if (it == doc.MemberEnd()) {
+    doc.AddMember(rapidjson::Value(key.data(), allocator), rapidjson::Value(newValue), allocator);
+  } else {
+    it->value.SetFloat(newValue);
+  }
+  value = newValue;
+  config.Write();
+  return true;
 }
 
 // Label under the bulk-convert button. The settings view controller is
@@ -582,6 +654,13 @@ void RegisterModSettings() {
         UnityEngine::Transform* parent = container->get_transform().unsafePtr();
         gAdvancedWidgets.clear();
 
+        auto createTextRow = [&](StringW text, float height) {
+          // The settings scroll container does not drive child heights, so
+          // text created at its default zero size overlaps adjacent controls.
+          return BSML::Lite::CreateText(container->get_transform(), text, UnityEngine::Vector2(0.0f, 0.0f),
+                                        UnityEngine::Vector2(90.0f, height));
+        };
+
         // Which build is actually running, in the headset, without a file.
         // "the new features do not work" and "the new build did not install"
         // look identical from the outside, and a version number here separates
@@ -645,6 +724,7 @@ void RegisterModSettings() {
         }
 
         header("Performance");
+
         if constexpr (!kLiteBuild) {
           // Renders map post-process effects below eye resolution and scales
           // them up. Full-screen raymarchers cost per pixel: 50% is a quarter of
@@ -874,6 +954,16 @@ void RegisterModSettings() {
         }
       },
       "Vivify", false);
+
+  auto* menuButton = BSML::Register::RegisterMenuButton(
+      "Vivify", "Open Vivify mod settings",
+      []() {
+        BSML::SharedCoroutineStarter::get_instance()->StartCoroutine(
+            custom_types::Helpers::CoroutineHelper::New(OpenVivifySettingsFromMainMenu()));
+      });
+  if (menuButton == nullptr) {
+    PaperLogger.error("Vivify could not register its left-side main menu button");
+  }
 }
 }
 
@@ -1195,6 +1285,9 @@ void EnsureConfigDefaults() {
   needsWrite |= EnsureBoolConfigValue(kSubmitScoresConfigKey, true, gSubmitScores);
   needsWrite |= EnsureBoolConfigValue(kTranslateShadersConfigKey, true, gTranslateShaders);
   needsWrite |= EnsureBoolConfigValue(kAudioLinkConfigKey, true, gAudioLink);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkGainConfigKey, 1.0f, 0.0f, 4.0f, gAudioLinkGain);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkBassConfigKey, 1.0f, 0.0f, 3.0f, gAudioLinkBass);
+  needsWrite |= EnsureFloatConfigValue(kAudioLinkTrebleConfigKey, 1.0f, 0.0f, 3.0f, gAudioLinkTreble);
   needsWrite |= EnsureBoolConfigValue(kMapRealtimeShadowsConfigKey, false, gMapRealtimeShadows);
   needsWrite |= EnsureBoolConfigValue(kMapReflectionProbesConfigKey, true, gMapReflectionProbes);
   needsWrite |= EnsureBoolConfigValue(kFullReflectionProbesConfigKey, false, gFullReflectionProbes);
@@ -1216,6 +1309,7 @@ void EnsureConfigDefaults() {
   if (needsWrite) {
     config.Write();
   }
+  Vivify::AudioLink::SetTuning(gAudioLinkGain, gAudioLinkBass, gAudioLinkTreble);
 }
 
 MOD_EXTERN_FUNC void setup(CModInfo *info) noexcept {

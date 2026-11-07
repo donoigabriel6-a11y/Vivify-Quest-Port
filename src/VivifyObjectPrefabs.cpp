@@ -1102,6 +1102,53 @@ void Runtime::UpdateSaberReplacementColors() {
   }
 }
 
+void Runtime::SuppressOriginalSaberTrail(GlobalNamespace::SaberTrail* trail) {
+  if (!IsAlive(trail) || _currentBeatmapData == nullptr || _isResetting) return;
+
+  auto* trailTransform = trail->get_transform().unsafePtr();
+  auto* trailRenderer = trail->____trailRenderer.unsafePtr();
+  auto* meshRenderer = IsAlive(trailRenderer) ? trailRenderer->____meshRenderer.unsafePtr() : nullptr;
+  if (!IsAlive(trailTransform) || !IsAlive(meshRenderer)) return;
+
+  for (auto const& target : _activeSabers) {
+    if (!IsAlive(target.controller) || !IsAlive(target.saber)) continue;
+    auto replacementIt = _saberReplacements.find(target.controller);
+    if (replacementIt == _saberReplacements.end()) continue;
+    auto& replacement = replacementIt->second;
+    if (!replacement.suppressOriginalSaberTrails) continue;
+
+    bool isVivifyTrail = std::any_of(
+        replacement.followedTrails.begin(), replacement.followedTrails.end(),
+        [trail](FollowedSaberTrail* followed) { return followed == trail; });
+    if (isVivifyTrail) continue;
+
+    auto isUnder = [this, trailTransform](UnityEngine::Transform* root) {
+      if (!IsAlive(root)) return false;
+      for (auto* current = trailTransform; IsAlive(current); current = current->get_parent().unsafePtr()) {
+        if (current == root) return true;
+      }
+      return false;
+    };
+    auto* saberTransform = IsAlive(target.saber) ? target.saber->get_transform().unsafePtr() : nullptr;
+    auto* controllerTransform = IsAlive(target.controller) ? target.controller->get_transform().unsafePtr() : nullptr;
+    if (!isUnder(saberTransform) && !isUnder(controllerTransform)) continue;
+
+    if (meshRenderer->get_enabled()) {
+      meshRenderer->set_enabled(false);
+      auto recorded =
+          std::find(replacement.disabledRenderers.begin(), replacement.disabledRenderers.end(), meshRenderer);
+      if (recorded == replacement.disabledRenderers.end()) {
+        replacement.disabledRenderers.emplace_back(meshRenderer);
+      }
+      auto* gameObject = meshRenderer->get_gameObject().unsafePtr();
+      VIVIFY_DEBUG("Vivify suppressed competing saber trail '{}' for saber type {}",
+                   IsAlive(gameObject) ? ToStdString(gameObject->get_name()) : std::string("?"),
+                   static_cast<int>(target.saber->get_saberType()));
+    }
+    return;
+  }
+}
+
 void Runtime::ReplaceNoteVisuals(GlobalNamespace::NoteController* noteController,
                                  std::vector<AssignedPrefabInfo*> const& infos) {
   if (GetDisableCustomNoteVisuals()) return;
@@ -1367,24 +1414,23 @@ void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
   }
 
   if (!replacement.followedTrails.empty() && ShouldHideOriginal(infos)) {
-    auto hide = [this, &replacement](GlobalNamespace::SaberTrail* trail) {
-      auto* renderer = IsAlive(trail) ? trail->____trailRenderer.unsafePtr() : nullptr;
-      if (IsAlive(renderer) && renderer->____meshRenderer && renderer->____meshRenderer->get_enabled()) {
-        renderer->____meshRenderer->set_enabled(false);
-        replacement.disabledRenderers.emplace_back(renderer->____meshRenderer);
+    replacement.suppressOriginalSaberTrails = true;
+    auto disableTrailRenderer = [this, &replacement](GlobalNamespace::SaberTrailRenderer* trailRenderer) {
+      if (!IsAlive(trailRenderer) || !IsAlive(trailRenderer->____meshRenderer.unsafePtr())) return;
+      auto* meshRenderer = trailRenderer->____meshRenderer.unsafePtr();
+      for (auto* followedTrail : replacement.followedTrails) {
+        if (IsAlive(followedTrail) && followedTrail->____trailRenderer.unsafePtr() == trailRenderer) return;
       }
+      if (!meshRenderer->get_enabled()) return;
+      meshRenderer->set_enabled(false);
+      replacement.disabledRenderers.emplace_back(meshRenderer);
     };
-    if (hasOwnTrail) hide(sourceTrail);
-    // Trails another mod hangs under the saber (Custom Models puts its own
-    // under its model) would otherwise keep drawing over the map's. Their
-    // renderers sit at the scene root, so hiding the saber's renderers misses
-    // them.
-    auto trails = smc->GetComponentsInChildren<GlobalNamespace::SaberTrail*>(true);
-    for (int i = 0; trails && i < trails.size(); i++) {
-      auto* trail = trails[i];
-      if (trail == sourceTrail || il2cpp_utils::try_cast<FollowedSaberTrail>(trail).has_value()) continue;
-      hide(trail);
+    auto trailRenderers =
+        smc->get_gameObject()->GetComponentsInChildren<GlobalNamespace::SaberTrailRenderer*>(true);
+    for (int i = 0; i < trailRenderers.size(); ++i) {
+      disableTrailRenderer(trailRenderers[i]);
     }
+    disableTrailRenderer(sourceTrail->____trailRenderer.unsafePtr());
   }
 }
 
