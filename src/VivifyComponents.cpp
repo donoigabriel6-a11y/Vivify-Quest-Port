@@ -3,12 +3,16 @@
 #include "VivifyAudioLink.hpp"
 #include "UnityEngine/Renderer.hpp"
 #include "UnityEngine/Matrix4x4.hpp"
+// Defines SaberMovementData's interface conversion that InitFromSaber calls;
+// Saber.hpp only declares it, which compiles and then fails to link.
+#include "GlobalNamespace/SaberMovementData.hpp"
 
 DEFINE_TYPE(Vivify, OffsetBladeMovementData);
 DEFINE_TYPE(Vivify, FollowedSaberTrail);
 DEFINE_TYPE(Vivify, RuntimeBehaviour);
 DEFINE_TYPE(Vivify, MultipassKeywordController);
 DEFINE_TYPE(Vivify, CameraApplier);
+DEFINE_TYPE(Vivify, SingleViewCameraShaders);
 DEFINE_TYPE(Vivify, CullingCameraController);
 DEFINE_TYPE(Vivify, SecondaryCameraController);
 
@@ -85,17 +89,52 @@ void FollowedSaberTrail::InitFollowed(GlobalNamespace::SaberTrail* followed, Uni
   if (!IsManagedAlive(followedRenderer) || !IsManagedAlive(rendererPrefab)) return;
 
   _followed = followed;
+  _saber = nullptr;
+  _controller = nullptr;
+  auto sourceParent = followedRenderer->get_transform()->get_parent();
+  Setup(followed->____movementData, rendererPrefab, sourceParent.unsafePtr(), parent, material, topPos, bottomPos,
+        duration, samplingFrequency, granularity, followed->____whiteSectionMaxDuration, followed->____color);
+}
+
+void FollowedSaberTrail::InitFromSaber(GlobalNamespace::Saber* saber, GlobalNamespace::SaberModelController* controller,
+                                       GlobalNamespace::SaberTrailRenderer* rendererPrefab,
+                                       UnityEngine::Transform* parent, UnityEngine::Material* material,
+                                       UnityEngine::Color color, UnityEngine::Vector3 topPos,
+                                       UnityEngine::Vector3 bottomPos, float_t duration,
+                                       int32_t samplingFrequency, int32_t granularity) {
+  if (!IsManagedAlive(saber) || !IsManagedAlive(parent) || !IsManagedAlive(material) ||
+      !IsManagedAlive(rendererPrefab)) {
+    return;
+  }
+  // The same data the game hands its own trail in SaberModelController.Init.
+  auto* movementData = saber->get_movementDataForVisualEffects();
+  if (movementData == nullptr) return;
+
+  _followed = nullptr;
+  _saber = saber;
+  _controller = controller;
+  // 0.03 is the white section the game's saber prefab serialises.
+  Setup(movementData->i___GlobalNamespace__IBladeMovementData(), rendererPrefab, nullptr, parent, material, topPos,
+        bottomPos, duration, samplingFrequency, granularity, 0.03f, color);
+}
+
+void FollowedSaberTrail::Setup(GlobalNamespace::IBladeMovementData* movementData,
+                               GlobalNamespace::SaberTrailRenderer* rendererPrefab,
+                               UnityEngine::Transform* rendererParent, UnityEngine::Transform* parent,
+                               UnityEngine::Material* material, UnityEngine::Vector3 topPos,
+                               UnityEngine::Vector3 bottomPos, float_t duration, int32_t samplingFrequency,
+                               int32_t granularity, float_t whiteSectionMaxDuration, UnityEngine::Color color) {
   if (_offsetMovementData == nullptr) {
     _offsetMovementData = OffsetBladeMovementData::New_ctor();
   }
-  _offsetMovementData->Init(followed->____movementData, parent, topPos, bottomPos);
+  _offsetMovementData->Init(movementData, parent, topPos, bottomPos);
 
   ____trailDuration = duration;
   ____samplingFrequency = samplingFrequency;
   ____granularity = granularity;
-  ____whiteSectionMaxDuration = followed->____whiteSectionMaxDuration;
+  ____whiteSectionMaxDuration = whiteSectionMaxDuration;
   ____movementData = reinterpret_cast<GlobalNamespace::IBladeMovementData*>(_offsetMovementData);
-  ____color = followed->____color;
+  ____color = color;
 
   auto* trailRenderer = ____trailRenderer.unsafePtr();
   if (!IsManagedAlive(trailRenderer)) {
@@ -103,9 +142,8 @@ void FollowedSaberTrail::InitFollowed(GlobalNamespace::SaberTrail* followed, Uni
         rendererPrefab, UnityEngine::Vector3(0.0f, 0.0f, 0.0f), UnityEngine::Quaternion::get_identity());
     ____trailRenderer = trailRenderer;
     if (!IsManagedAlive(trailRenderer)) return;
-    auto sourceParent = followedRenderer->get_transform()->get_parent();
-    if (IsManagedAlive(sourceParent.unsafePtr())) {
-      trailRenderer->get_transform()->SetParent(sourceParent.unsafePtr());
+    if (IsManagedAlive(rendererParent)) {
+      trailRenderer->get_transform()->SetParent(rendererParent);
     }
   }
 
@@ -113,6 +151,7 @@ void FollowedSaberTrail::InitFollowed(GlobalNamespace::SaberTrail* followed, Uni
     trailRenderer->____meshRenderer->set_material(material);
   }
 
+  Init();
   Update();
   auto gameObject = get_gameObject();
   if (IsManagedAlive(gameObject.unsafePtr())) {
@@ -120,11 +159,23 @@ void FollowedSaberTrail::InitFollowed(GlobalNamespace::SaberTrail* followed, Uni
   }
 }
 
+bool FollowedSaberTrail::SourceAlive() const {
+  return _followed != nullptr ? IsManagedAlive(_followed) : IsManagedAlive(_saber);
+}
+
+UnityEngine::Color FollowedSaberTrail::SourceColor() {
+  if (_followed != nullptr) return _followed->____color;
+  if (IsManagedAlive(_controller) && _controller->____colorManager != nullptr) {
+    return _controller->____colorManager->ColorForSaberType(_saber->get_saberType());
+  }
+  return ____color;
+}
+
 void FollowedSaberTrail::Update() {
-  if (!IsManagedAlive(_followed)) return;
+  if (!SourceAlive()) return;
   auto* trailRenderer = ____trailRenderer.unsafePtr();
   if (!IsManagedAlive(trailRenderer) || !trailRenderer->____meshRenderer) return;
-  ____color = _followed->____color;
+  ____color = SourceColor();
   if (_hasLastAppliedColor && NearlySameColor(____color, _lastAppliedColor)) return;
 
   auto* block = UnityEngine::MaterialPropertyBlock::New_ctor();
@@ -138,7 +189,7 @@ void FollowedSaberTrail::Update() {
 void FollowedSaberTrail::LateUpdate() {
   auto* trailRenderer = ____trailRenderer.unsafePtr();
   auto* meshRenderer = IsManagedAlive(trailRenderer) ? trailRenderer->____meshRenderer.unsafePtr() : nullptr;
-  if (!IsManagedAlive(_followed) || ____movementData == nullptr || !IsManagedAlive(meshRenderer)) {
+  if (!SourceAlive() || ____movementData == nullptr || !IsManagedAlive(meshRenderer)) {
     Cleanup();
     auto gameObject = get_gameObject();
     if (IsManagedAlive(gameObject.unsafePtr())) {
@@ -156,6 +207,8 @@ void FollowedSaberTrail::Cleanup() {
   }
   ____trailRenderer = nullptr;
   _followed = nullptr;
+  _saber = nullptr;
+  _controller = nullptr;
   _hasLastAppliedColor = false;
 }
 
@@ -412,6 +465,7 @@ void RuntimeBehaviour::Update() {
   }
   try {
     Runtime::Instance().PollBlitCompanion();
+    Runtime::Instance().PollBlitCompanionPrefabs();
   } catch (...) {
     static int reported = 0;
     if (reported++ < 3) PaperLogger.error("Vivify Blit companion update threw");
@@ -421,6 +475,18 @@ void RuntimeBehaviour::Update() {
 
 void RuntimeBehaviour::OnDestroy() {
   Runtime::Instance().OnBehaviourDestroyed(this);
+}
+
+void SingleViewCameraShaders::OnPreRender() {
+  if (GetSingleViewMapCameras()) Runtime::Instance().BeginSingleViewCamera();
+}
+
+void SingleViewCameraShaders::OnPostRender() {
+  Runtime::Instance().EndSingleViewCamera();
+}
+
+void SingleViewCameraShaders::OnDisable() {
+  Runtime::Instance().EndSingleViewCamera();
 }
 
 void CameraApplier::OnPreCull() {

@@ -2,11 +2,11 @@ name: Build Quest Mod
 
 on:
   push:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
     tags:
       - 'v*'
   pull_request:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
   workflow_dispatch:
     inputs:
       version:
@@ -168,7 +168,13 @@ jobs:
 
     # The lite QMOD takes its name from mod.json, so the two can be told apart
     # in a mod manager. mod.json is restored straight after.
+    # `qpm s qmod` builds again before it packs. VIVIFY_LITE is cached in the
+    # build directory, and set here too, so that build stays lite; until
+    # 0.15.1 it reconfigured as the full build and the lite QMOD was the full
+    # library under another name.
     - name: Create the lite QMOD
+      env:
+        VIVIFY_LITE: '1'
       run: |
         python3 - <<'PY'
         import json
@@ -179,22 +185,36 @@ jobs:
         qpm s qmod
         git checkout -- mod.json
 
+    # The lite library is the only one holding the " (lite)" version suffix
+    # (include/main.hpp folds it away in the full build).
+    - name: Check the lite QMOD holds the lite library
+      run: |
+        so=$(find build -name 'libVivify.so' -print -quit)
+        if ! grep -aq ' (lite)' "$so"; then
+          echo "::error::the lite build produced the full library (no ' (lite)' marker in $so)"
+          exit 1
+        fi
+        full_so=$(mktemp -d)
+        unzip -q -o "./Vivify-v${{ steps.mod_version.outputs.version }}.qmod" -d "$full_so"
+        if grep -aq ' (lite)' "$(find "$full_so" -name 'libVivify.so' -print -quit)"; then
+          echo "::warning::the full QMOD's library carries the ' (lite)' marker; check it is the full build"
+        fi
+
+    # The full QMOD, already named, sits beside the new one; every other
+    # .qmod here is the lite build.
     - name: Name the lite QMOD
       run: |
         shopt -s nullglob
-        built=(./*.qmod)
-        lite=()
-        for file in "${built[@]}"; do
-          if [ "$file" != "./Vivify-v${{ steps.mod_version.outputs.version }}.qmod" ]; then
-            lite+=("$file")
-          fi
+        full="./Vivify-v${{ steps.mod_version.outputs.version }}.qmod"
+        built=()
+        for file in ./*.qmod; do
+          [ "$file" != "$full" ] && built+=("$file")
         done
-        if [ ${#lite[@]} -ne 1 ]; then
-          echo "::error::expected one lite .qmod after excluding the full build, found ${#lite[@]}"
-          printf 'QMOD files: %s\n' "${built[@]}"
+        if [ ${#built[@]} -ne 1 ]; then
+          echo "::error::expected one lite .qmod besides $full, found ${#built[@]}"
           exit 1
         fi
-        mv "${lite[0]}" "./Vivify-Lite-v${{ steps.mod_version.outputs.version }}.qmod"
+        mv "${built[0]}" "./Vivify-Lite-v${{ steps.mod_version.outputs.version }}.qmod"
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v4

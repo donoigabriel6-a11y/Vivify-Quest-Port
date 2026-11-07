@@ -24,14 +24,12 @@
 #include "UnityEngine/Vector4.hpp"
 #include "beatsaber-hook/shared/utils/typedefs-wrappers.hpp"
 
-#include <algorithm>
 #include <array>
 #include <chrono>
 #include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
-#include <limits>
 #include <optional>
 #include <string>
 
@@ -105,9 +103,6 @@ struct State {
   int fpsCount = 0;
   int rightChannelTestCounter = kRightChannelTestDelay;
   bool ignoreRightChannel = false;
-  Settings settings{};
-  std::time_t cachedLocalTimeSecond = std::numeric_limits<std::time_t>::min();
-  int cachedLocalSecondsOfDay = 0;
 };
 
 State& S() {
@@ -188,7 +183,7 @@ bool WriteBundleFile() {
 
 // AudioLink.cs UpdateSettings.
 void ApplySettings(State& s) {
-  Settings const& settings = s.settings;
+  Settings const settings;
   auto* m = s.material;
   m->SetFloat(s.ids.gain, settings.gain);
   m->SetFloat(s.ids.fadeLength, settings.fadeLength);
@@ -272,8 +267,6 @@ bool Load(State& s) {
   bundle->Unload(false);
   if (!Alive(material) || !Alive(texture)) {
     PaperLogger.warn("Vivify AudioLink: the bundle has no AudioLink material or texture");
-    if (Alive(material)) UnityEngine::Object::Destroy(material);
-    if (Alive(texture)) UnityEngine::Object::Destroy(texture);
     return false;
   }
   // Nothing managed references these once the bundle is gone, and a scene
@@ -283,10 +276,6 @@ bool Load(State& s) {
   auto* shader = material->get_shader().unsafePtr();
   if (!Alive(shader) || !shader->get_isSupported()) {
     PaperLogger.warn("Vivify AudioLink: this GPU rejects the AudioLink shader; AudioLink stays off");
-    material->set_hideFlags(UnityEngine::HideFlags::None);
-    texture->set_hideFlags(UnityEngine::HideFlags::None);
-    UnityEngine::Object::Destroy(material);
-    UnityEngine::Object::Destroy(texture);
     return false;
   }
   s.material = material;
@@ -315,41 +304,15 @@ void Unpublish(State& s) {
   if (!s.active) return;
   UnityEngine::Shader::SetGlobalTexture(s.ids.audioTexture, static_cast<UnityEngine::Texture*>(nullptr));
   s.active = false;
-  // Release the material and texture resources so they can be GC'd.
-  // They were marked DontUnloadUnusedAsset in Load(), so we must explicitly
-  // destroy them here or they leak until the game exits.
-  if (Alive(s.material)) {
-    s.material->set_hideFlags(UnityEngine::HideFlags::None);
-    UnityEngine::Object::Destroy(s.material);
-    s.material = nullptr;
-  }
-  if (Alive(s.texture)) {
-    s.texture->set_hideFlags(UnityEngine::HideFlags::None);
-    UnityEngine::Object::Destroy(s.texture);
-    s.texture = nullptr;
-  }
-  // Clear managed arrays so their SafePtrs can be released.
-  s.samples.reset();
-  s.stringVectors.reset();
-  s.framesArray.reset();
-  // Reset attempted so that re-enabling AudioLink will call Load() again.
-  s.attempted = false;
-  PaperLogger.info("Vivify AudioLink: turned off and resources released");
+  PaperLogger.info("Vivify AudioLink: turned off");
 }
 
 // The song while playing a level, the menu's preview otherwise -- what
 // BSAudioLink's GameProvider and MenuProvider hand AudioLink.
 void FindSource(State& s) {
   int const frame = UnityEngine::Time::get_frameCount();
-  // Keep using the current source if it's alive and playing.
   if (Alive(s.source) && s.source->get_isPlaying()) return;
-  // If the source died or stopped playing, search immediately (no cooldown).
-  // Only apply the 30-frame cooldown if we have a live source that's just paused.
-  // If we have no source at all, also apply a cooldown to avoid hammering
-  // FindObjectOfType every frame when no audio source exists in the scene.
-  bool const hasLiveSource = Alive(s.source);
-  int const cooldown = hasLiveSource ? 30 : 60;  // longer cooldown when no source found
-  if (frame - s.lastSourceSearchFrame < cooldown) return;
+  if (frame - s.lastSourceSearchFrame < 30) return;
   s.lastSourceSearchFrame = frame;
   s.source = nullptr;
   GlobalNamespace::ColorScheme* scheme = nullptr;
@@ -408,39 +371,31 @@ void FpsUpdate(State& s) {
 // whose right channel stays silent.
 void SendAudio(State& s) {
   auto* source = s.source;
-  // Safety check: the managed array might have been GC'd if the level unloaded.
-  if (!s.framesArray.has_value() || !s.framesArray.value()) return;
   ArrayW<float> frames(static_cast<Array<float>*>(s.framesArray->ptr()));
   source->GetOutputData(frames, 0);
   std::copy(frames.begin(), frames.end(), s.framesL.begin());
   if (s.rightChannelTestCounter > 0) {
-    if (!s.ignoreRightChannel) {
+    if (s.ignoreRightChannel) {
+      s.framesR = s.framesL;
+    } else {
       source->GetOutputData(frames, 1);
       std::copy(frames.begin(), frames.end(), s.framesR.begin());
     }
     s.rightChannelTestCounter--;
   } else {
     s.rightChannelTestCounter = kRightChannelTestDelay;
-    // Check multiple samples for silence, not just the first one.
-    // The first sample can be zero even in a valid stereo signal.
+    frames[0] = 0.0f;
     source->GetOutputData(frames, 1);
     std::copy(frames.begin(), frames.end(), s.framesR.begin());
-    bool rightSilent = true;
-    for (int i = 0; i < kFrames; i++) {
-      if (std::abs(s.framesR[static_cast<size_t>(i)]) > 1e-6f) {
-        rightSilent = false;
-        break;
-      }
-    }
-    s.ignoreRightChannel = rightSilent;
+    s.ignoreRightChannel = s.framesR[0] == 0.0f;
+    if (s.ignoreRightChannel) s.framesR = s.framesL;
   }
   ArrayW<float> samples(static_cast<Array<float>*>(s.samples->ptr()));
   for (int i = 0; i < 4; i++) {
     auto const offset = static_cast<size_t>(i * kSamplesPerArray);
     std::copy_n(s.framesL.begin() + offset, kSamplesPerArray, samples.begin());
     s.material->SetFloatArray(s.ids.samplesL[static_cast<size_t>(i)], samples);
-    auto const& right = s.ignoreRightChannel ? s.framesL : s.framesR;
-    std::copy_n(right.begin() + offset, kSamplesPerArray, samples.begin());
+    std::copy_n(s.framesR.begin() + offset, kSamplesPerArray, samples.begin());
     s.material->SetFloatArray(s.ids.samplesR[static_cast<size_t>(i)], samples);
   }
 }
@@ -463,19 +418,16 @@ void Update(State& s) {
   if (s.elapsedTime >= s.fpsTime) FpsUpdate(s);
 
   auto const now = std::chrono::system_clock::now();
-  double const utcSecondsUnix = std::chrono::duration<double>(now.time_since_epoch()).count();
-  std::time_t const wall = static_cast<std::time_t>(std::floor(utcSecondsUnix));
-  if (wall != s.cachedLocalTimeSecond) {
-    std::tm local{};
-    localtime_r(&wall, &local);
-    s.cachedLocalTimeSecond = wall;
-    s.cachedLocalSecondsOfDay = local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec;
-  }
-  double const subSecond = utcSecondsUnix - static_cast<double>(wall);
-  double const localSeconds = s.cachedLocalSecondsOfDay + subSecond;
+  std::time_t const wall = std::chrono::system_clock::to_time_t(now);
+  std::tm local{};
+  localtime_r(&wall, &local);
+  double const subSecond =
+      std::chrono::duration<double>(now.time_since_epoch()).count() - static_cast<double>(wall);
+  double const localSeconds = local.tm_hour * 3600.0 + local.tm_min * 60.0 + local.tm_sec + subSecond;
   s.material->SetVector(s.ids.advancedTimeProps0,
                         UnityEngine::Vector4{static_cast<float>(s.elapsedTime), static_cast<float>(s.elapsedTimeMSW),
                                              static_cast<float>(localSeconds), 0.0f});
+  double const utcSecondsUnix = std::chrono::duration<double>(now.time_since_epoch()).count();
   s.material->SetVector(s.ids.advancedTimeProps1,
                         UnityEngine::Vector4{static_cast<float>(s.networkTimeMS & 65535),
                                              static_cast<float>(s.networkTimeMS >> 16),
@@ -483,41 +435,15 @@ void Update(State& s) {
                                              static_cast<float>(std::fmod(utcSecondsUnix, 86400.0))});
 
   FindSource(s);
-  if (!Alive(s.source)) {
-    // No audio source available (e.g., between menu and gameplay).
-    // Send silent audio data to avoid stale visualization.
-    // Safety check: the managed array might have been GC'd if the level unloaded.
-    if (s.samples.has_value() && s.samples.value()) {
-      ArrayW<float> samples(static_cast<Array<float>*>(s.samples->ptr()));
-      for (int i = 0; i < 4; i++) {
-        for (int j = 0; j < kSamplesPerArray; j++) samples[j] = 0.0f;
-        s.material->SetFloatArray(s.ids.samplesL[static_cast<size_t>(i)], samples);
-        s.material->SetFloatArray(s.ids.samplesR[static_cast<size_t>(i)], samples);
-      }
-    }
-    // Also clear media state so shaders know nothing is playing.
-    s.material->SetFloat(s.ids.mediaVolume, 0.0f);
-    s.material->SetFloat(s.ids.mediaTime, 0.0f);
-    s.material->SetFloat(s.ids.mediaPlaying, 3.0f);  // Stopped
-    s.material->SetFloat(s.ids.mediaLoop, 0.0f);
-    s.material->SetFloat(s.ids.sourceVolume, 0.0f);
-    s.material->SetFloat(s.ids.sourceSpatialBlend, 0.0f);
-    s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{0, 0, 0, 0});
-    return;
-  }
+  if (!Alive(s.source)) return;
   SendAudio(s);
   // Beat Saber's music sources are 2D: no spatial falloff to evaluate, so the
   // volume goes through unchanged and the spatial blend is zero.
   float const volume = s.source->get_volume();
   s.material->SetFloat(s.ids.sourceVolume, volume);
   s.material->SetFloat(s.ids.sourceSpatialBlend, 0.0f);
-  auto transform = s.source->get_transform();
-  if (Alive(transform)) {
-    auto const position = transform->get_position();
-    s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{position.x, position.y, position.z, 0.0f});
-  } else {
-    s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{0, 0, 0, 0});
-  }
+  auto const position = s.source->get_transform()->get_position();
+  s.material->SetVector(s.ids.sourcePosition, UnityEngine::Vector4{position.x, position.y, position.z, 0.0f});
   // AudioLink.cs autoSetMediaState.
   s.material->SetFloat(s.ids.mediaVolume, volume);
   float time = 0.0f;
@@ -530,28 +456,8 @@ void Update(State& s) {
 
 }  // namespace
 
-// Force FindSource to search for a new audio source on the next frame.
-// Called when the level ends or the audio source is known to have changed.
-void OnLevelEnd() {
-  auto& s = S();
-  s.source = nullptr;
-  s.lastSourceSearchFrame = -1000;
-  s.appliedScheme = nullptr;
-}
-
 bool IsActive() {
   return S().active;
-}
-
-void SetTuning(float gain, float bass, float treble) {
-  auto& s = S();
-  s.settings.gain = std::isfinite(gain) ? std::clamp(gain, 0.0f, 4.0f) : 1.0f;
-  s.settings.bass = std::isfinite(bass) ? std::clamp(bass, 0.0f, 3.0f) : 1.0f;
-  s.settings.treble = std::isfinite(treble) ? std::clamp(treble, 0.0f, 3.0f) : 1.0f;
-  if (!Alive(s.material)) return;
-  s.material->SetFloat(s.ids.gain, s.settings.gain);
-  s.material->SetFloat(s.ids.bass, s.settings.bass);
-  s.material->SetFloat(s.ids.treble, s.settings.treble);
 }
 
 void Tick() {

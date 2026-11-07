@@ -45,9 +45,31 @@ bool GetAudioLinkEnabled();
 // Whether SetRenderingSettings may turn on realtime shadows (off: the
 // shadow* quality settings in it are ignored).
 bool GetMapRealtimeShadows();
+bool GetMapReflectionProbes();
+bool GetFullReflectionProbes();
+bool GetSingleViewMapCameras();
+// Auto Effect Resolution (0.15.3): fed every gameplay frame's duration, reset
+// when a level starts.
+void ReportGameplayFrame(float seconds);
+void ResetAutoEffectResolution();
+// Crash recovery (0.15.2): the setting, and whether the level now playing is
+// in recovery mode (caps the effect resolution at 50%).
+bool GetCrashRecovery();
+bool GetRecoveryModeActive();
+void SetRecoveryModeActive(bool active);
+// Flushes the Vivify logs after every line until `seconds` from now, so a
+// native crash in that window leaves its last step in the files (0.15.1).
+void FlushVivifyLogsEveryLineFor(int seconds);
 // Replay render mode (0.14.9): converted maps get single-screen programs only,
 // for replay and recording renderers. The headset draws none of them.
 bool GetReplayRenderMode();
+// Flushes the session and global logs to disk now.
+void FlushVivifyLogs();
+bool GetReplayRenderModeSetting();
+bool GetReplayModInstalled();
+// "Use Windows Bundle For This Map", by song folder.
+bool GetWindowsBundleForMap(std::string const& levelPath);
+void SetWindowsBundleForMap(std::string const& levelPath, bool enabled);
 // Experimental blit companion (0.14.10, opt-in from 0.14.11).
 bool GetBlitScreenTextureFix();
 // Compile converted maps' shaders in the menu before play (0.14.15).

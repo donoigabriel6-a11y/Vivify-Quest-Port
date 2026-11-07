@@ -1,4 +1,6 @@
 #include "VivifyRuntimeInternal.hpp"
+#include "VivifyRecovery.hpp"
+#include <ctime>
 #include "VivifyComponents.hpp"
 #include "UnityEngine/Rendering/CameraEvent.hpp"
 #include "UnityEngine/Rendering/TextureDimension.hpp"
@@ -62,17 +64,6 @@ void Runtime::ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTex
                       UnityEngine::Material* material, int pass) {
     auto const dstId = ToTargetId(dst);
     material = BlitMaterialFor(material, dst);
-    // PC Vivify's GrabPass shaders sample _GrabTexture. CommandBuffer.Blit binds
-    // its input as _MainTex, not _GrabTexture, so these shaders otherwise sample
-    // an unbound texture on Quest and can turn the whole view white. Bind the
-    // actual blit source for this command before drawing the effect.
-    if (material != nullptr) {
-      auto* shader = material->get_shader().unsafePtr();
-      auto const shaderName = ShaderNameForLog(shader);
-      if (IsAlive(shader) && shaderName.find("Grab Pass") != std::string::npos) {
-        cb->SetGlobalTexture("_GrabTexture", srcId);
-      }
-    }
     if (material == nullptr) {
       cb->Blit(srcId, dstId);
     } else if (pass >= 0) {
@@ -216,17 +207,6 @@ UnityEngine::Rendering::CommandBuffer* Runtime::BuildMidRenderCommandBuffer(
   auto emitBlit = [&](RTI blitSrc, UnityEngine::RenderTexture* dst, UnityEngine::Material* material, int pass) {
     RTI const blitDst = ToTargetId(dst);
     material = BlitMaterialFor(material, dst);
-    // PC Vivify's GrabPass shaders sample _GrabTexture. CommandBuffer.Blit binds
-    // its input as _MainTex, not _GrabTexture, so these shaders otherwise sample
-    // an unbound texture on Quest and can turn the whole view white. Bind the
-    // actual blit source for this command before drawing the effect.
-    if (material != nullptr) {
-      auto* shader = material->get_shader().unsafePtr();
-      auto const shaderName = ShaderNameForLog(shader);
-      if (IsAlive(shader) && shaderName.find("Grab Pass") != std::string::npos) {
-        cb->SetGlobalTexture("_GrabTexture", srcId);
-      }
-    }
     if (material == nullptr) {
       cb->Blit(blitSrc, blitDst);
     } else if (pass >= 0) {
@@ -544,6 +524,18 @@ void Runtime::HandleBlit(CustomJSONData::CustomEventData* customEventData, rapid
                        customEventData->time, std::string(*asset));
     }
     return;
+  }
+  // Crash recovery (0.15.2): an effect that was starting when this map last
+  // went down is skipped; every other effect is recorded as it starts, so the
+  // next launch knows which one to blame if this run goes down too.
+  if (asset.has_value() && !clear) {
+    if (IsRecoverySkippedBlit(normalizedAsset)) {
+      PaperLogger.warn("Vivify Blit skipped at time {}: '{}' was starting when this map last went down (crash "
+                       "recovery; 'Forget Crash Recovery' in the advanced settings brings it back)",
+                       customEventData->time, std::string(*asset));
+      return;
+    }
+    Recovery::BlitStarted(normalizedAsset, CurrentSongTime(), static_cast<int64_t>(std::time(nullptr)));
   }
   float const durationBeats = ReadFloat(json, "duration").value_or(0.0f);
   float const duration = DurationBeatsToSeconds(durationBeats);
@@ -1405,6 +1397,17 @@ MultipassKeywordController* Runtime::EnsureMultipassKeywordController(UnityEngin
   return controller;
 }
 
+namespace {
+bool MainEffectRenders(GlobalNamespace::MainEffectController* controller) {
+  if (!IsManagedAlive(controller) || controller->_mainEffectContainer.ptr() == nullptr ||
+      !IsManagedAlive(controller->_mainEffectContainer)) {
+    return false;
+  }
+  auto mainEffectSO = controller->_mainEffectContainer->get_mainEffect();
+  return mainEffectSO.ptr() != nullptr && IsManagedAlive(mainEffectSO) && mainEffectSO->get_hasPostProcessEffect();
+}
+}
+
 void Runtime::RefreshCameraApplier(UnityEngine::GameObject* mainCamGO, bool allowCameraApplier) {
   if (_pauseMenuActive) allowCameraApplier = false;
   if (!allowCameraApplier) {
@@ -1429,6 +1432,22 @@ void Runtime::RefreshCameraApplier(UnityEngine::GameObject* mainCamGO, bool allo
     _cameraApplier->hasMainEffect = false;
   }
 
+  // The game's main effect (bloom) is off on Quest unless a mod turns it on --
+  // GraphicsTweaks' bloom setting does. Left to itself it renders in the game's
+  // own ImageEffectController before the CameraApplier, so every Blit, the
+  // "before main effect" ones too, landed on an already-bloomed image. When it
+  // is on, the CameraApplier renders it between the map's pre- and
+  // post-effects as on PC, and ShouldBypassImageEffect skips the game's pass so
+  // it is not drawn twice. With it off nothing changes (0.14.27).
+  auto* mainEffect = mainCamGO->GetComponent<GlobalNamespace::MainEffectController*>();
+  bool const mainEffectActive = MainEffectRenders(mainEffect);
+  _cameraApplier->mainEffectController = mainEffectActive ? mainEffect : nullptr;
+  if (_cameraApplier->hasMainEffect != mainEffectActive) {
+    _cameraApplier->hasMainEffect = mainEffectActive;
+    PaperLogger.info("Vivify main camera: game main effect (bloom) {} the map's effects",
+                     mainEffectActive ? "is on; rendering it between" : "is off; not rendering it with");
+  }
+
   bool const needsBlit = !GetDisableAllBlits() &&
                          (!_preEffects.empty() || !_postEffects.empty() || HasMidRenderEffects() ||
                           !_secondaryCameras.empty());
@@ -1451,6 +1470,8 @@ bool Runtime::ShouldBypassImageEffect(GlobalNamespace::ImageEffectController* co
     return false;
   }
   if (!IsManagedAlive(controller)) return false;
+  auto* mainEffect = _cameraApplier->mainEffectController;
+  if (IsManagedAlive(mainEffect) && mainEffect->_imageEffectController.unsafePtr() == controller) return true;
   return controller->get_gameObject().unsafePtr() == _cameraApplierGO;
 }
 

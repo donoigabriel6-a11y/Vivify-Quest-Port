@@ -1,8 +1,9 @@
 #include "VivifyRuntimeInternal.hpp"
+#include "VivifyRecovery.hpp"
+#include <ctime>
 #include <chrono>
 #include <algorithm>
 #include "VivifyComponents.hpp"
-#include "VivifyAudioLink.hpp"
 #include "UnityEngine/ParticleSystem.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
@@ -45,10 +46,10 @@ bool Runtime::IsMultiplayerModLoaded() const {
 // signal. The lookup is cached for the lifetime of a beatmap (ResetRuntime
 // clears it) so this stays off the per-note/per-frame path.
 bool Runtime::IsInMultiplayerGameplay() {
-  if (!_inMultiplayerGameplayCached.load(std::memory_order_acquire)) {
+  if (!_inMultiplayerGameplayCached) {
+    _inMultiplayerGameplayCached = true;
     auto* controller = UnityEngine::Object::FindObjectOfType<GlobalNamespace::MultiplayerController*>();
     _inMultiplayerGameplay = IsManagedAlive(controller);
-    _inMultiplayerGameplayCached.store(true, std::memory_order_release);
     VIVIFY_DEBUG("Vivify multiplayer check: inMultiplayerGameplay={} multiplayerModLoaded={}",
                  BoolText(_inMultiplayerGameplay), BoolText(IsMultiplayerModLoaded()));
   }
@@ -102,10 +103,6 @@ void Runtime::EnsureBehaviour() {
   auto* gameObject = UnityEngine::GameObject::New_ctor(u"VivifyRuntime");
   UnityEngine::Object::DontDestroyOnLoad(gameObject);
   _behaviour = gameObject->AddComponent<RuntimeBehaviour*>();
-  if (!_behaviour) {
-    PaperLogger.error("Failed to add RuntimeBehaviour component");
-    UnityEngine::Object::Destroy(gameObject);
-  }
   RefreshCameraComponents(false);
 }
 
@@ -146,6 +143,12 @@ void Runtime::Update() {
       _lastGameplayFrame = {};
       return;
     }
+    if (!_pauseMenuActive) ReportGameplayFrame(UnityEngine::Time::get_unscaledDeltaTime());
+    // Crash recovery's sign of life, every 5 s of play (0.15.2).
+    if (frameStart - _lastRecoveryHeartbeat > std::chrono::seconds(5)) {
+      _lastRecoveryHeartbeat = frameStart;
+      Recovery::Heartbeat(CurrentSongTime(), static_cast<int64_t>(std::time(nullptr)));
+    }
     // A frame that took far longer than the game's own pacing is a stall
     // somewhere outside this function -- on a converted map's first frames,
     // the GPU driver compiling its translated shaders. Logged with where in
@@ -162,6 +165,7 @@ void Runtime::Update() {
     // Ten seconds into the song the converted bundle has loaded and drawn;
     // whatever happens after that is not what the crash guard is for.
     if (!_loadGuardPath.empty() && CurrentSongTime() > 10.0f) DisarmLoadGuard();
+    RunScheduledVisualChecks();
     UpdateMaterialAnimations();
     UpdateGlobalAnimations();
     UpdateAnimatorAnimations();
@@ -282,6 +286,24 @@ void Runtime::RegisterSyncedObject(UnityEngine::GameObject* root, float startTim
   }
 }
 
+// The rate of the song clock: Slower or Faster Song, the practice speed, or a
+// mod such as BSNightcoreQuest. 1 without a song.
+float Runtime::SongSpeed() {
+  if (!IsManagedAlive(_audioTimeSyncController)) return 1.0f;
+  float const scale = _audioTimeSyncController->_timeScale;
+  return std::isfinite(scale) && scale > 0.0f ? std::clamp(scale, 0.05f, 10.0f) : 1.0f;
+}
+
+namespace {
+// A video plays on its own clock at 1x, so at any other song speed it drifts
+// from the music; a synced one was also yanked back each time it drifted
+// 0.15 s (#91).
+void ApplyVideoSpeed(UnityEngine::Video::VideoPlayer* videoPlayer, float speed) {
+  if (!IsManagedAlive(videoPlayer) || !videoPlayer->get_canSetPlaybackSpeed()) return;
+  if (std::abs(videoPlayer->get_playbackSpeed() - speed) > 0.005f) videoPlayer->set_playbackSpeed(speed);
+}
+}
+
 void Runtime::UpdatePrefabAnimationSpeed() {
   if (_syncedObjects.empty() && _livePrefabs.empty()) {
 
@@ -317,6 +339,14 @@ void Runtime::UpdatePrefabAnimationSpeed() {
   };
   for (auto& synced : _syncedObjects) drive(synced.animators, synced.particleSystems);
   for (auto& [id, prefab] : _livePrefabs) drive(prefab.animators, prefab.particleSystems);
+
+  float const songSpeed = SongSpeed();
+  for (auto& synced : _syncedObjects) {
+    for (auto* videoPlayer : synced.videoPlayers) ApplyVideoSpeed(videoPlayer, songSpeed);
+  }
+  for (auto& [id, prefab] : _livePrefabs) {
+    for (auto* videoPlayer : prefab.videoPlayers) ApplyVideoSpeed(videoPlayer, songSpeed);
+  }
 }
 
 void Runtime::UnregisterSyncedObject(UnityEngine::GameObject* root) {
@@ -394,7 +424,7 @@ bool Runtime::IsReduceDebrisEnabled() {
 
 void Runtime::SetPauseMenuActive(bool active) {
   if (_currentBeatmapData == nullptr) {
-    // Pause menu not applicable outside gameplay; ignore
+    _pauseMenuActive = false;
     return;
   }
   if (_pauseMenuActive == active) return;
@@ -452,7 +482,7 @@ void Runtime::SetPauseMenuActive(bool active) {
 void Runtime::RefreshMultipassRendering() {
   auto mainCam = UnityEngine::Camera::get_main();
   auto mainCamGO = IsAlive(mainCam.unsafePtr()) ? mainCam->get_gameObject().unsafePtr() : nullptr;
-  if (mainCamGO) RefreshMultipassRendering(mainCamGO);
+  RefreshMultipassRendering(mainCamGO);
   RefreshLoadedMaterialStereoKeywords();
 }
 
@@ -492,6 +522,32 @@ void Runtime::RefreshIsolationSettings() {
 }
 
 void Runtime::ResetRuntime(std::string_view reason) {
+  // Breadcrumbs through a level's teardown, each flushed to disk (0.15.0):
+  // "the game crashes after a Vivify level" came with no log, and a native
+  // crash here loses whatever was still buffered. The last "level end:" line
+  // in vivify_global.txt names the step it died in. Only for a level that was
+  // running, since this also runs on every map selection.
+  bool const levelWasRunning = _currentBeatmapData != nullptr || _levelReportOpen;
+  auto step = [levelWasRunning](char const* what) {
+    if (!levelWasRunning) return;
+    PaperLogger.info("Vivify level end: {}", what);
+    FlushVivifyLogs();
+  };
+  // The return to the menu is the other crash window: every line for the
+  // next 20 s is flushed as written (0.15.1).
+  if (levelWasRunning) {
+    FlushVivifyLogsEveryLineFor(20);
+    // Crash recovery: a song played to its end clears the marker; anything
+    // else keeps it, so a restart straight after can be told apart.
+    bool const finished = _lastKnownSongLength > 0.0f && _lastSongTime >= _lastKnownSongLength - 2.0f;
+    Recovery::LevelEnded(finished, _lastSongTime, static_cast<int64_t>(std::time(nullptr)));
+  }
+  _recoveryMode = false;
+  _recoverySkippedBlits.clear();
+  EndSingleViewCamera();
+  _singleViewSwaps.clear();
+  SetRecoveryModeActive(false);
+  step(reason.empty() ? "resetting" : std::string(reason).c_str());
   SetSongPlaying(false);
   // Written before anything is torn down, while the numbers are still valid.
   // The song position is included rather than a guess at "quit" vs "beaten":
@@ -505,20 +561,21 @@ void Runtime::ResetRuntime(std::string_view reason) {
                                              : std::string(")");
     }
     WriteLevelEndReport(outcome);
+    step("report written");
   }
-
-  // Notify AudioLink that the level ended so it can re-acquire the audio source.
-  Vivify::AudioLink::OnLevelEnd();
 
   VIVIFY_DEBUG("Vivify ResetRuntime: livePrefabs={} preloaded={} synced={} secondaryCameras={} declaredTextures={} assets={}",
                _livePrefabs.size(), _instantiatePrefabs.size(), _syncedObjects.size(),
                _secondaryCameras.size(), _declaredTextures.size(), _assets.size());
   _isResetting = true;
   DestroyCameraApplier();
+  step("camera effects removed");
   RestoreGlobalProperties();
   RestoreAllVisualReplacements();
+  step("note and saber visuals restored");
   RestoreOverlayRenderState();
   RestoreMainCameraOriginals();
+  step("camera restored");
   std::unordered_set<UnityEngine::GameObject*> destroyed;
   for (auto& [id, prefab] : _livePrefabs) {
     if (prefab.gameObject == nullptr) {
@@ -543,6 +600,7 @@ void Runtime::ResetRuntime(std::string_view reason) {
   }
   _livePrefabs.clear();
   _instantiatePrefabs.clear();
+  step("map prefabs destroyed");
   _syncedObjects.clear();
   _blitMaterialValidCache.clear();
   _cachedBlitWidth = 0;
@@ -587,7 +645,9 @@ void Runtime::ResetRuntime(std::string_view reason) {
   _lastGameplayFrame = {};
   _stallsLogged = 0;
   ReleaseCachedBlitTextures();
+  step("render textures released");
   RestoreRenderSettings();
+  step("render settings restored");
   _renderSettingAnimations.clear();
   _savedRenderSettings.clear();
   _currentRenderSettings.clear();
@@ -611,9 +671,10 @@ void Runtime::ResetRuntime(std::string_view reason) {
   _pauseMenuActive = false;
   _reduceDebrisCached = false;
   _reduceDebris = false;
-  _inMultiplayerGameplayCached.store(false, std::memory_order_relaxed);
+  _inMultiplayerGameplayCached = false;
   _inMultiplayerGameplay = false;
   _isResetting = false;
+  step("done");
 }
 
 }

@@ -70,23 +70,18 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         head_len = 20
     meta = bytearray()
     meta += unity.encode() + b"\0"
-    meta += struct.pack('>i', target)  # target platform in file endianness (big-endian)
+    meta += struct.pack('<i', target)
     meta += b"\x00"                       # m_EnableTypeTree
     meta += bytes(payload_len)            # stand-in for the rest of the metadata+data
+    total = head_len + len(meta)
+    data_offset = head_len + 16
     metadata_size = len(meta)
-    # Data section starts after metadata, aligned to 16 bytes for version >= 7
-    data_offset = head_len + metadata_size
-    if version >= 7:
-        data_offset = (data_offset + 15) & ~15
-    # Add dummy data section so that metadata_size <= data_size (validation check)
-    data_size = metadata_size
-    total = data_offset + data_size
     if version >= 22:
         body += struct.pack('>I', 0)            # legacy metadataSize
         body += struct.pack('>I', 0)            # legacy fileSize
         body += struct.pack('>I', version)
         body += struct.pack('>I', 0)            # legacy dataOffset
-        body += b'\x01' + b'\x00\x00\x00'       # endianness=1 (converter expects 1=big-endian) + reserved
+        body += b'\x00' + b'\x00\x00\x00'       # little-endian + reserved
         body += struct.pack('>I', metadata_size)
         body += struct.pack('>Q', total)
         body += struct.pack('>Q', data_offset)
@@ -96,13 +91,8 @@ def serialized_file(version: int, target: int, payload_len: int, unity="2021.3.1
         body += struct.pack('>I', total)
         body += struct.pack('>I', version)
         body += struct.pack('>I', data_offset)
-        body += b'\x01' + b'\x00\x00\x00'       # endianness=1 (converter expects 1=big-endian) + reserved
+        body += b'\x00' + b'\x00\x00\x00'
     body += meta
-    # Pad to data_offset
-    while len(body) < data_offset:
-        body.append(0)
-    # Add dummy data section
-    body += bytes(data_size)
     assert len(body) == total, (len(body), total)
     return bytes(body)
 
@@ -222,4 +212,4 @@ def target_of(data, off, size, sf_version):
     p = off + head_len
     e = data.index(b"\0", p)
     p = e + 1
-    return struct.unpack_from('>i', data, p)[0]
+    return struct.unpack_from('<i', data, p)[0]

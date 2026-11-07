@@ -344,6 +344,15 @@ struct GlslOptions {
   // stage rather than written as gl_Layer, which GLSL ES has no vertex-stage
   // form of.
   bool multiview = false;
+  // The program is the STEREO_INSTANCING_ON (single-pass instanced) variant,
+  // or a plain variant given that variant's code. Its vertex stage takes the
+  // eye from SV_InstanceID even when it does not write
+  // SV_RenderTargetArrayIndex itself: with a geometry stage (grass, fur,
+  // extruded lines) the eye goes to the geometry shader through an ordinary
+  // varying and the geometry shader writes the layer. Without this the
+  // instance ID was gl_InstanceID, so every view took eye 0, and the geometry
+  // stage's gl_Layer = 0 sent the draw to the left eye only (0.15.1).
+  bool stereoInstancedProgram = false;
   // Used only when the program has no RDEF of its own.
   ExternalReflection const* reflection = nullptr;
 };

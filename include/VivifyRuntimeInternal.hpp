@@ -23,6 +23,11 @@ struct CameraApplier;
 
 class Runtime {
 public:
+  // Runs bundle selection again for the selected map (its Windows-bundle
+  // choice changed in the menu). Not during a level.
+  void ReselectCurrentLevel();
+  std::string const& SelectedLevelPath() const { return _selectedLevelPath; }
+  bool SelectedMapHasVivify() const { return _selectedMapHasVivifyRequirement; }
   static Runtime& Instance();
 
   CustomJSONData::CustomBeatmapData* GetCurrentBeatmapData() const { return _currentBeatmapData; }
@@ -45,6 +50,8 @@ public:
   void OnBehaviourDestroyed(RuntimeBehaviour* behaviour);
   // Advances an in-flight blit companion load; once a frame, menu included.
   void PollBlitCompanion();
+  void PollBlitCompanionPrefabs();
+  void FinishBlitCompanion(bool current);
   // Advances "Prepare Shaders Before Playing" (0.14.15): compiles a converted
   // bundle's shaders in the menu, a few materials a frame. Once a frame.
   void PollShaderWarmup();
@@ -94,7 +101,6 @@ public:
   void ApplySaberVisualsToActive();
   void ApplySaberVisuals(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                          UnityEngine::Transform* parent);
-  void SuppressOriginalSaberTrail(GlobalNamespace::SaberTrail* trail);
   void ReplaceDebrisVisuals(GlobalNamespace::NoteDebris* debris);
 
   void ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTexture* dest,
@@ -126,9 +132,19 @@ private:
   void UpdateSyncedObjects();
 
   void UpdatePrefabAnimationSpeed();
+  float SongSpeed();
   void LogThrottledUpdateError(std::string_view what);
 
   void HandleLevelSelected(SongCore::API::LevelSelect::LevelWasSelectedEventArgs const& event);
+  void SelectBundleForLevel();
+  void RunScheduledVisualChecks();
+  void DisableRealtimeShadowsForLevel();
+  void DisableRealtimeReflectionProbesForLevel();
+  // Crash recovery (0.15.2), see VivifyRecovery.hpp.
+  void EnterRecoveryModeIfNeeded();
+  bool IsRecoverySkippedBlit(std::string const& normalizedAsset) const;
+  void RunVisualCheck(std::string_view when);
+  void NoteVisualProblem(std::string problem);
   void DownloadBundle(uint32_t checksum, std::string const& levelPath, std::function<void(bool)> callback);
   // The same, saving to destPath instead of the level's Android bundle path.
   void DownloadBundleTo(uint32_t checksum, std::string const& destPath, std::function<void(bool)> callback);
@@ -148,7 +164,7 @@ private:
   // shaders, for blits into single-screen textures, which the multiview
   // programs of the main conversion cannot draw into.
   void PrepareBlitCompanion(std::string const& levelPath, std::string const& pcBundlePath);
-  void LoadBlitCompanion(std::string const& levelPath, std::string const& companionPath);
+  void LoadBlitCompanion(std::string const& levelPath, std::string const& companionPath, bool wantsPrefabs);
   void ClearBlitCompanion();
   // The material a blit into `destination` should draw with: `material`, or
   // for a single-screen destination a copy of it on the single-view shader.
@@ -353,7 +369,8 @@ private:
   void ApplySaberReplacementColor(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                                   VisualReplacement& replacement, bool force = false);
   void UpdateSaberReplacementColors();
-  void ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
+  GlobalNamespace::SaberTrailRenderer* FindSaberTrailRendererPrefab(GlobalNamespace::SaberModelController* smc);
+  void ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                               std::vector<AssignedPrefabInfo*> const& infos, VisualReplacement& replacement);
   void ApplyReplacementRenderersToMaterialBlock(GlobalNamespace::MaterialPropertyBlockController* mpb,
                                                 VisualReplacement& replacement, bool hideOriginal,
@@ -462,6 +479,9 @@ private:
   std::unordered_set<CustomJSONData::CustomEventData*> _catchUpAppliedCustomEvents;
   float _lastSongTime = -1.0f;
   float _lastKnownSongLength = -1.0f;
+  bool _recoveryMode = false;
+  std::vector<std::string> _recoverySkippedBlits;
+  std::chrono::steady_clock::time_point _lastRecoveryHeartbeat{};
   float _lastSyncSongTime = -1.0f;
   int _songTimeCacheFrame = -1;
   int _lastUpdateErrorFrame = -1000;
@@ -496,6 +516,10 @@ private:
   int _auditShadersRunnable = 0;
   int _auditShadersNoProgram = 0;
   int _auditShadersDeviceRejected = 0;
+  // Live visual checks (VivifyVisualCheck.cpp, 0.14.29): what looked wrong
+  // this level, for the top of its report block.
+  std::vector<std::string> _visualProblems;
+  int _visualChecksRun = 0;
   std::vector<std::string> _auditRejectedNames;
   int _texturesDecoded = 0;
   int _texturesSkipped = 0;
@@ -515,7 +539,7 @@ private:
   bool _reduceDebrisCached = false;
 
   bool _inMultiplayerGameplay = false;
-  std::atomic<bool> _inMultiplayerGameplayCached = false;
+  bool _inMultiplayerGameplayCached = false;
 
   // Bundle chosen for the selected level. Usually the level's own
   // bundleAndroid2021.vivify, but it can point at a downloaded or an
@@ -523,7 +547,6 @@ private:
   std::string _selectedBundlePath;
   // Source path of a PC->Android bundle conversion currently running on a
   // worker thread, so re-selecting the same level does not start a second one.
-  std::mutex _bundleConversionMutex;
   std::string _bundleConversionSource;
   // PC-built shaders standing in for shaders a level's Android bundle shipped
   // empty, by shader name, for _graftLevelPath. Kept alive with
@@ -562,6 +585,25 @@ private:
   UnityEngine::AssetBundle* _blitCompanionBundle = nullptr;
   std::string _blitCompanionLoadingLevel;
   std::string _blitCompanionLoadingPath;
+  // Single-view shaders for a map's own texture cameras (0.15.3): the
+  // companion's prefabs are loaded too when the map is known to have such
+  // cameras, so every shader its prefabs use has a single-view twin.
+  bool _blitCompanionWantsPrefabs = false;
+  bool _blitCompanionLoadingWantsPrefabs = false;
+  SafePtr<UnityEngine::AssetBundleRequest> _blitCompanionPrefabs;
+  std::string _companionPcBundlePath;
+  // Materials of spawned map objects whose shader has a single-view twin,
+  // swapped while a texture camera renders (SingleViewCameraShaders).
+  std::unordered_map<UnityEngine::Material*, std::pair<UnityEngine::Shader*, UnityEngine::Shader*>> _singleViewSwaps;
+  bool _singleViewSwapped = false;
+
+public:
+  void NoteTextureCameras(int count);
+  void RegisterSingleViewMaterials(UnityEngine::GameObject* root);
+  void BeginSingleViewCamera();
+  void EndSingleViewCamera();
+
+private:
   std::string _graftLevelPath;
   int _graftGeneration = 0;
   int _graftApplied = 0;

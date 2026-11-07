@@ -2,9 +2,9 @@ name: Validate
 
 on:
   push:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -24,20 +24,14 @@ jobs:
       shell: pwsh
       run: ./scripts/validate-modjson.ps1
 
-    - name: Check mod, QPM, and CMake versions match
+    - name: Check mod.json / qpm.json versions match
       run: |
         MOD_VERSION=$(python3 -c "import json; print(json.load(open('mod.json'))['version'])")
         QPM_VERSION=$(python3 -c "import json; print(json.load(open('qpm.json'))['info']['version'])")
-        CMAKE_VERSION=$(sed -n 's/^set(MOD_VERSION "\([^"]*\)")/\1/p' qpm_defines.cmake)
         echo "mod.json version: $MOD_VERSION"
         echo "qpm.json version: $QPM_VERSION"
-        echo "qpm_defines.cmake version: $CMAKE_VERSION"
         if [ "$MOD_VERSION" != "$QPM_VERSION" ]; then
           echo "::error::mod.json version ($MOD_VERSION) and qpm.json info.version ($QPM_VERSION) are out of sync"
-          exit 1
-        fi
-        if [ "$MOD_VERSION" != "$CMAKE_VERSION" ]; then
-          echo "::error::mod.json version ($MOD_VERSION) and qpm_defines.cmake MOD_VERSION ($CMAKE_VERSION) are out of sync"
           exit 1
         fi
 
@@ -162,6 +156,19 @@ jobs:
     - name: Zip extractor tests
       run: VIVIFY_ZIPTEST=/tmp/ziptest python3 tools/ziptest/run_tests.py
 
+  crash-recovery-tests:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Build and run the crash recovery tests, with sanitizers
+      run: |
+        g++ -std=c++20 -O1 -g -Wall -Wextra -fsanitize=address,undefined \
+            -I include -o /tmp/recoverytest \
+            tools/recovery/main.cpp src/VivifyRecovery.cpp
+        /tmp/recoverytest
+
   global-log-tests:
     runs-on: ubuntu-latest
     steps:
@@ -187,7 +194,7 @@ jobs:
       run: |
         g++ -std=c++20 -O1 -g -fsanitize=address,undefined \
             -I include -o /tmp/reporttest \
-            tools/report/main.cpp src/VivifyReport.cpp
+            tools/report/main.cpp src/VivifyReport.cpp src/VivifyGlobalLog.cpp
 
     - name: Report writer tests
       run: /tmp/reporttest

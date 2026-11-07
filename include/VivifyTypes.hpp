@@ -194,6 +194,7 @@ struct LivePrefab {
   std::vector<TrackW> tracks;
   std::vector<UnityEngine::Animator*> animators;
   std::vector<UnityEngine::ParticleSystem*> particleSystems;
+  std::vector<UnityEngine::Video::VideoPlayer*> videoPlayers;
 };
 
 struct SyncedObject {
@@ -342,7 +343,6 @@ struct VisualReplacement {
   std::vector<UnityEngine::Renderer*> disabledRenderers;
   std::vector<UnityEngine::Renderer*> replacementRenderers;
   std::vector<FollowedSaberTrail*> followedTrails;
-  bool suppressOriginalSaberTrails = false;
   GlobalNamespace::MaterialPropertyBlockController* materialPropertyBlockController = nullptr;
   ArrayW<UnityW<UnityEngine::Renderer>, Array<UnityW<UnityEngine::Renderer>>*> originalMaterialBlockRenderers;
   bool hasOriginalMaterialBlockRenderers = false;

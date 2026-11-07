@@ -103,6 +103,27 @@ The session log gives maintainers the broader Vivify runtime information, while 
 
 ⸻
 
+2. vivify_global.txt — PERSISTENT HISTORY, ESPECIALLY USEFUL AFTER A RESTART
+
+Vivify also writes a persistent global log in the same folder:
+
+/sdcard/ModData/com.beatgames.beatsaber/Mods/Vivify/vivify_global.txt
+
+Unlike VivifySession.txt, this file is not cleared when Beat Saber starts. It appends Vivify log entries from successive launches and puts a date/time timestamp on each line. That means it can still contain the run that failed even after you restart Beat Saber and the current VivifySession.txt has been replaced.
+
+This log is particularly important for crashes that happen while leaving a level. Vivify writes and flushes "Vivify level end:" breadcrumbs as it tears down a level. The last such line in the global log shows the last teardown step reached before the crash, which helps narrow down where the game stopped.
+
+The global log is split into parts when a file reaches about 9 MB:
+
+vivify_global.txt
+vivify_global-p2.txt
+vivify_global-p3.txt
+...
+
+Collect every existing vivify_global*.txt file. Do not send only vivify_global.txt if numbered parts exist: the relevant older session may be in one of them. The oldest parts are automatically removed only after all global-log parts together exceed about 1 GB.
+
+The global log is written by the full Vivify build. The Lite build does not create it. If it is missing on the full build, check the opening lines of VivifySession.txt for "Vivify log files: global" and whether the file could not be opened.
+
 3. Android Logcat — SUPPLEMENTARY
 
 Android also maintains a system-wide log called Logcat.
@@ -230,6 +251,7 @@ At minimum:
 
 VivifySession.txt
 VivifyReport.txt
+vivify_global.txt and every existing vivify_global-pN.txt part
 
 For a crash, also provide the contents of:
 
@@ -266,6 +288,7 @@ For crashes, provide:
 
 VivifySession.txt
 VivifyReport.txt
+vivify_global.txt and every existing vivify_global-pN.txt part
 logs2/
 logcat.txt
 
@@ -326,8 +349,9 @@ TL;DR
 
 For a Vivify Quest bug, give us the Vivify logs first.
 
-VivifySession.txt   <- MOST IMPORTANT
+VivifySession.txt   <- Current launch; overwritten at next launch
 VivifyReport.txt    <- Per-level information
+vivify_global*.txt  <- Persistent timestamped history; send every part
 logs2/              <- For crashes
 logcat.txt          <- Additional/system-level information
 

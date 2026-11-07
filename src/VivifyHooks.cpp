@@ -39,11 +39,6 @@ MAKE_HOOK_MATCH(SaberModelController_Init, &GlobalNamespace::SaberModelControlle
   VivifyPart("SaberModelController.Init", [&] { Runtime::Instance().TrackSaberModel(self, saber, parent); });
 }
 
-MAKE_HOOK_MATCH(SaberTrail_LateUpdate, &GlobalNamespace::SaberTrail::LateUpdate, void, GlobalNamespace::SaberTrail* self) {
-  SaberTrail_LateUpdate(self);
-  VivifyPart("SaberTrail.LateUpdate", [&] { Runtime::Instance().SuppressOriginalSaberTrail(self); });
-}
-
 MAKE_HOOK_MATCH(GameNoteController_Init, &GlobalNamespace::GameNoteController::Init, void, GlobalNamespace::GameNoteController* self, GlobalNamespace::NoteData* noteData, ByRef<GlobalNamespace::NoteSpawnData> noteSpawnData, GlobalNamespace::NoteVisualModifierType noteVisualModifierType, float cutAngleTolerance, float uniformScale) {
   GameNoteController_Init(self, noteData, noteSpawnData, noteVisualModifierType, cutAngleTolerance, uniformScale);
   VivifyPart("GameNoteController.Init", [&] { Runtime::Instance().ApplyNotePrefabFor(self); });
@@ -61,23 +56,20 @@ MAKE_HOOK_MATCH(BurstSliderGameNoteController_Init, &GlobalNamespace::BurstSlide
 
 MAKE_HOOK_MATCH(NoteCutCoreEffectsSpawner_SpawnNoteCutEffect, &GlobalNamespace::NoteCutCoreEffectsSpawner::SpawnNoteCutEffect, void, GlobalNamespace::NoteCutCoreEffectsSpawner* self, ByRef<GlobalNamespace::NoteCutInfo> noteCutInfo, GlobalNamespace::NoteController* noteController, int32_t sparkleParticlesCount, int32_t explosionParticlesCount) {
 
-  struct DebrisStackGuard {
-    bool pushed = false;
-    ~DebrisStackGuard() {
-      if (pushed) Runtime::Instance().PopActiveDebrisPrefabs();
-    }
-  } guard;
-
+  bool pushed = false;
   VivifyPart("NoteCutCoreEffectsSpawner.SpawnNoteCutEffect", [&] {
     bool const customDebris = Runtime::Instance().GetCurrentBeatmapData() != nullptr &&
                               !Runtime::Instance().IsResetting() && !Runtime::Instance().IsReduceDebrisEnabled();
     if (customDebris) {
       Runtime::Instance().PushActiveDebrisPrefabs(
           Runtime::Instance().FindAssignedDebrisPrefabs(noteCutInfo->noteData));
-      guard.pushed = true;
+      pushed = true;
     }
   });
   NoteCutCoreEffectsSpawner_SpawnNoteCutEffect(self, noteCutInfo, noteController, sparkleParticlesCount, explosionParticlesCount);
+  if (pushed) {
+    VivifyPart("NoteCutCoreEffectsSpawner.SpawnNoteCutEffect", [&] { Runtime::Instance().PopActiveDebrisPrefabs(); });
+  }
 }
 
 MAKE_HOOK_MATCH(NoteDebris_Init, &GlobalNamespace::NoteDebris::Init, void, GlobalNamespace::NoteDebris* self, GlobalNamespace::ColorType colorType, UnityEngine::Vector3 notePos, UnityEngine::Quaternion noteRot, UnityEngine::Vector3 noteMoveVec, UnityEngine::Vector3 noteScale, UnityEngine::Vector3 positionOffset, UnityEngine::Quaternion rotationOffset, UnityEngine::Vector3 cutPoint, UnityEngine::Vector3 cutNormal, UnityEngine::Vector3 force, UnityEngine::Vector3 torque, float lifeTime, UnityEngine::Vector3 cutoutOffset, bool forceOnlySimplePhysics) {
@@ -104,9 +96,7 @@ MAKE_HOOK_MATCH(ImageEffectController_OnRenderImage, &GlobalNamespace::ImageEffe
   bool bypass = false;
   VivifyPart("ImageEffectController.OnRenderImage", [&] { bypass = Runtime::Instance().ShouldBypassImageEffect(self); });
   if (bypass) {
-    if (src != nullptr && dest != nullptr) {
-      UnityEngine::Graphics::Blit(static_cast<UnityEngine::Texture*>(src), dest);
-    }
+    UnityEngine::Graphics::Blit(static_cast<UnityEngine::Texture*>(src), dest);
     return;
   }
   ImageEffectController_OnRenderImage(self, src, dest);
@@ -133,13 +123,13 @@ MAKE_HOOK_MATCH(PauseController_HandlePauseMenuManagerDidPressMenuButton, &Globa
 }
 
 MAKE_HOOK_MATCH(PauseController_HandlePauseMenuManagerDidFinishResumeAnimation, &GlobalNamespace::PauseController::HandlePauseMenuManagerDidFinishResumeAnimation, void, GlobalNamespace::PauseController* self) {
-  VivifyPart("PauseController_HandlePauseMenuManagerDidFinishResumeAnimation", [] { Runtime::Instance().SetPauseMenuActive(false); });
   PauseController_HandlePauseMenuManagerDidFinishResumeAnimation(self);
+  VivifyPart("PauseController_HandlePauseMenuManagerDidFinishResumeAnimation", [] { Runtime::Instance().SetPauseMenuActive(false); });
 }
 
 MAKE_HOOK_MATCH(GamePause_Resume, &GlobalNamespace::GamePause::Resume, void, GlobalNamespace::GamePause* self) {
-  VivifyPart("GamePause_Resume", [] { Runtime::Instance().SetPauseMenuActive(false); });
   GamePause_Resume(self);
+  VivifyPart("GamePause_Resume", [] { Runtime::Instance().SetPauseMenuActive(false); });
 }
 
 // Ported from the rbatteries1-design/Lars27110 base. VRCenterAdjust drives the
@@ -181,8 +171,7 @@ bool ShouldSkipVRCenterAdjust(GlobalNamespace::VRCenterAdjust* self, std::string
 }
 
 MAKE_HOOK_MATCH(VRCenterAdjust_Start, &GlobalNamespace::VRCenterAdjust::Start, void, GlobalNamespace::VRCenterAdjust* self) {
-  // Start runs once; always call original to ensure initialization happens.
-  // The skip logic applies to Update/OnEnable/OnDisable which run repeatedly.
+  if (ShouldSkipVRCenterAdjust(self, "Start")) return;
   VRCenterAdjust_Start(self);
 }
 
@@ -218,7 +207,6 @@ namespace Vivify {
 void LateLoad() {
   Runtime::Instance().LateLoad();
   INSTALL_HOOK(PaperLogger, SaberModelController_Init);
-  INSTALL_HOOK(PaperLogger, SaberTrail_LateUpdate);
   INSTALL_HOOK(PaperLogger, GameNoteController_Init);
   INSTALL_HOOK(PaperLogger, BombNoteController_Init);
   INSTALL_HOOK(PaperLogger, BurstSliderGameNoteController_Init);

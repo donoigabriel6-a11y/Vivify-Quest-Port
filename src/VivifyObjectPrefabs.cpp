@@ -6,6 +6,12 @@
 #include "UnityEngine/Canvas.hpp"
 #include <exception>
 #include "UnityEngine/AnimatorCullingMode.hpp"
+#include "UnityEngine/Camera.hpp"
+#include "UnityEngine/RenderTexture.hpp"
+#include "UnityEngine/StereoTargetEyeMask.hpp"
+#include "UnityEngine/ReflectionProbe.hpp"
+#include "UnityEngine/Rendering/ReflectionProbeMode.hpp"
+#include "UnityEngine/Rendering/ReflectionProbeTimeSlicingMode.hpp"
 
 namespace Vivify {
 namespace {
@@ -28,6 +34,69 @@ int CullOffscreenAnimators(UnityEngine::GameObject* root) {
     culled++;
   }
   return culled;
+}
+
+// Cameras a map's prefab brings to render into a texture (0.15.1): Through
+// The Screen's in-world screens, mirrors, shadow and light-mesh cameras. In
+// the editor and on PC they are set to "Both" eyes, and there a camera with a
+// target texture renders that texture. On the Quest's XR rendering a camera
+// with a stereo target eye is an eye camera: it drew into the headset view
+// instead, at its texture's size, and the map became "a tiny square" in the
+// corner while its screens stayed empty. Such a camera now targets no eye, so
+// it renders into its texture once per frame, as it does on PC.
+int MakeTextureCamerasSingleView(UnityEngine::GameObject* root) {
+  if (!IsManagedAlive(root)) return 0;
+  int changed = 0;
+  auto cameras = root->GetComponentsInChildren<UnityEngine::Camera*>(true);
+  for (int i = 0; i < cameras.size(); i++) {
+    auto* camera = cameras[i];
+    if (!IsManagedAlive(camera)) continue;
+    auto* target = camera->get_targetTexture().unsafePtr();
+    if (!IsManagedAlive(target)) continue;
+    // Single-view twins of the map's shaders while it renders (0.15.3).
+    auto cameraGameObject = camera->get_gameObject();
+    if (IsManagedAlive(cameraGameObject.unsafePtr()) &&
+        cameraGameObject->GetComponent<Vivify::SingleViewCameraShaders*>() == nullptr) {
+      cameraGameObject->AddComponent<Vivify::SingleViewCameraShaders*>();
+    }
+    changed++;
+    if (camera->get_stereoTargetEye() == UnityEngine::StereoTargetEyeMask::None) continue;
+    camera->set_stereoTargetEye(UnityEngine::StereoTargetEyeMask::None);
+    auto cameraObject = camera->get_gameObject();
+    PaperLogger.info("Vivify prefab camera '{}' renders into texture '{}' ({}x{}): set to no eye, so it draws "
+                     "there instead of into the headset view",
+                     IsManagedAlive(cameraObject.unsafePtr()) ? ToStdString(cameraObject->get_name()) : "?",
+                     ToStdString(target->get_name()), target->get_width(), target->get_height());
+  }
+  return changed;
+}
+
+// Realtime reflection probes in a map's prefab, reduced unless "Full
+// Reflection Probes" is on (0.15.3): at most 128 px, no HDR, and one cube face
+// a frame instead of all six. Get Your Wish's water probe is 512 px HDR and
+// re-renders every frame; reduced, it costs about a seventieth as much.
+int ReduceReflectionProbes(UnityEngine::GameObject* root) {
+  if (GetFullReflectionProbes() || !IsManagedAlive(root)) return 0;
+  int changed = 0;
+  auto probes = root->GetComponentsInChildren<UnityEngine::ReflectionProbe*>(true);
+  for (int i = 0; i < probes.size(); i++) {
+    auto* probe = probes[i];
+    if (!IsManagedAlive(probe)) continue;
+    // By value: the enum's static constants are not exported for linking.
+    constexpr int32_t kRealtime = 1;         // ReflectionProbeMode.Realtime
+    constexpr int32_t kIndividualFaces = 1;  // ReflectionProbeTimeSlicingMode.IndividualFaces
+    if (probe->get_mode().value__ != kRealtime) continue;
+    int const before = probe->get_resolution();
+    if (before > 128) probe->set_resolution(128);
+    probe->set_hdr(false);
+    probe->set_timeSlicingMode(UnityEngine::Rendering::ReflectionProbeTimeSlicingMode(kIndividualFaces));
+    changed++;
+    auto probeObject = probe->get_gameObject();
+    PaperLogger.info("Vivify reflection probe '{}' reduced: {} px -> {} px, no HDR, one face a frame",
+                     IsManagedAlive(probeObject.unsafePtr()) ? ToStdString(probeObject->get_name()) : "?", before,
+                     std::min(before, 128));
+  }
+  return changed;
 }
 }
 }
@@ -692,6 +761,15 @@ void Runtime::InstantiatePrefab(CustomJSONData::CustomEventData* customEventData
     }
   }
 
+  auto videoArray = instance->GetComponentsInChildren<UnityEngine::Video::VideoPlayer*>(true);
+  std::vector<UnityEngine::Video::VideoPlayer*> videoPlayers;
+  for (auto videoPlayer : videoArray) {
+    if (videoPlayer != nullptr) videoPlayers.emplace_back(videoPlayer);
+  }
+
+  NoteTextureCameras(MakeTextureCamerasSingleView(instance));
+  RegisterSingleViewMaterials(instance);
+  ReduceReflectionProbes(instance);
   int const culledAnimators = CullOffscreenAnimators(instance);
   VIVIFY_DEBUG("Vivify InstantiatePrefab spawned: id='{}' asset='{}' tracks={} animators={} offscreenCulled={}",
                storageId, data.asset, data.tracks.size(), animators.size(), culledAnimators);
@@ -700,6 +778,7 @@ void Runtime::InstantiatePrefab(CustomJSONData::CustomEventData* customEventData
       .tracks = data.tracks,
       .animators = std::move(animators),
       .particleSystems = std::move(particleSystems),
+      .videoPlayers = std::move(videoPlayers),
   };
 }
 
@@ -935,6 +1014,9 @@ void Runtime::InstantiateReplacementPrefab(AssignedPrefabInfo const& info,
     animator->Update(0.01f);
   }
 
+  NoteTextureCameras(MakeTextureCamerasSingleView(spawned));
+  RegisterSingleViewMaterials(spawned);
+  ReduceReflectionProbes(spawned);
   CullOffscreenAnimators(spawned);
   RegisterSyncedObject(spawned, CurrentSongTime());
   replacement.spawnedObjects.emplace_back(spawned);
@@ -1017,53 +1099,6 @@ void Runtime::UpdateSaberReplacementColors() {
     if (it != _saberReplacements.end()) {
       ApplySaberReplacementColor(target.controller, target.saber, it->second);
     }
-  }
-}
-
-void Runtime::SuppressOriginalSaberTrail(GlobalNamespace::SaberTrail* trail) {
-  if (!IsAlive(trail) || _currentBeatmapData == nullptr || _isResetting) return;
-
-  auto* trailTransform = trail->get_transform().unsafePtr();
-  auto* trailRenderer = trail->____trailRenderer.unsafePtr();
-  auto* meshRenderer = IsAlive(trailRenderer) ? trailRenderer->____meshRenderer.unsafePtr() : nullptr;
-  if (!IsAlive(trailTransform) || !IsAlive(meshRenderer)) return;
-
-  for (auto const& target : _activeSabers) {
-    if (!IsAlive(target.controller) || !IsAlive(target.saber)) continue;
-    auto replacementIt = _saberReplacements.find(target.controller);
-    if (replacementIt == _saberReplacements.end()) continue;
-    auto& replacement = replacementIt->second;
-    if (!replacement.suppressOriginalSaberTrails) continue;
-
-    bool isVivifyTrail = std::any_of(
-        replacement.followedTrails.begin(), replacement.followedTrails.end(),
-        [trail](FollowedSaberTrail* followed) { return followed == trail; });
-    if (isVivifyTrail) continue;
-
-    auto isUnder = [this, trailTransform](UnityEngine::Transform* root) {
-      if (!IsAlive(root)) return false;
-      for (auto* current = trailTransform; IsAlive(current); current = current->get_parent().unsafePtr()) {
-        if (current == root) return true;
-      }
-      return false;
-    };
-    auto* saberTransform = IsAlive(target.saber) ? target.saber->get_transform().unsafePtr() : nullptr;
-    auto* controllerTransform = IsAlive(target.controller) ? target.controller->get_transform().unsafePtr() : nullptr;
-    if (!isUnder(saberTransform) && !isUnder(controllerTransform)) continue;
-
-    if (meshRenderer->get_enabled()) {
-      meshRenderer->set_enabled(false);
-      auto recorded =
-          std::find(replacement.disabledRenderers.begin(), replacement.disabledRenderers.end(), meshRenderer);
-      if (recorded == replacement.disabledRenderers.end()) {
-        replacement.disabledRenderers.emplace_back(meshRenderer);
-      }
-      auto* gameObject = meshRenderer->get_gameObject().unsafePtr();
-      VIVIFY_DEBUG("Vivify suppressed competing saber trail '{}' for saber type {}",
-                   IsAlive(gameObject) ? ToStdString(gameObject->get_name()) : std::string("?"),
-                   static_cast<int>(target.saber->get_saberType()));
-    }
-    return;
   }
 }
 
@@ -1219,7 +1254,7 @@ void Runtime::ApplySaberVisuals(GlobalNamespace::SaberModelController* smc, Glob
                        "default saber visible", type);
     }
   }
-  ApplySaberTrailVisuals(smc, validTrailInfos, replacement);
+  ApplySaberTrailVisuals(smc, saber, validTrailInfos, replacement);
   ApplySaberReplacementColor(smc, saber, replacement, true);
   VIVIFY_DEBUG("Vivify saber replaced (type {}): models={} trails={} spawned={} renderers={} hiddenOriginals={}",
                type, validModelInfos.size(), validTrailInfos.size(), replacement.spawnedObjects.size(),
@@ -1230,12 +1265,56 @@ void Runtime::ApplySaberVisuals(GlobalNamespace::SaberModelController* smc, Glob
   }
 }
 
-void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
+// The game's trail renderer prefab, for a saber whose controller has no trail
+// of its own (Custom Models' controller skips the game's Init through Lapiz, so
+// its _saberTrail is never set). Any SaberTrail the game set up carries the
+// prefab -- the default saber model asset does, and Custom Models keeps a
+// disabled default saber under its model when no custom one is picked. Failing
+// that, any loaded SaberTrailRenderer will do, as Instantiate copies what it is
+// handed. Searched each time rather than cached: the asset can be unloaded with
+// its scene.
+GlobalNamespace::SaberTrailRenderer* Runtime::FindSaberTrailRendererPrefab(GlobalNamespace::SaberModelController* smc) {
+  auto prefabOf = [this](ArrayW<GlobalNamespace::SaberTrail*> trails) -> GlobalNamespace::SaberTrailRenderer* {
+    if (!trails) return nullptr;
+    for (int i = 0; i < trails.size(); i++) {
+      auto* trail = trails[i];
+      if (!IsAlive(trail) || il2cpp_utils::try_cast<FollowedSaberTrail>(trail).has_value()) continue;
+      auto* prefab = trail->____trailRendererPrefab.unsafePtr();
+      if (IsAlive(prefab)) return prefab;
+    }
+    return nullptr;
+  };
+  if (IsAlive(smc)) {
+    if (auto* prefab = prefabOf(smc->GetComponentsInChildren<GlobalNamespace::SaberTrail*>(true))) return prefab;
+  }
+  if (auto* prefab = prefabOf(UnityEngine::Resources::FindObjectsOfTypeAll<GlobalNamespace::SaberTrail*>())) {
+    return prefab;
+  }
+  auto renderers = UnityEngine::Resources::FindObjectsOfTypeAll<GlobalNamespace::SaberTrailRenderer*>();
+  for (int i = 0; renderers && i < renderers.size(); i++) {
+    auto* renderer = renderers[i];
+    if (IsAlive(renderer) && IsAlive(renderer->____meshRenderer.unsafePtr())) return renderer;
+  }
+  return nullptr;
+}
+
+void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                                      std::vector<AssignedPrefabInfo*> const& infos,
                                      VisualReplacement& replacement) {
   if (infos.empty() || !IsAlive(smc)) return;
   auto* sourceTrail = smc->____saberTrail.unsafePtr();
-  if (!IsAlive(sourceTrail) || !sourceTrail->____trailRendererPrefab) return;
+  bool const hasOwnTrail = IsAlive(sourceTrail) && IsAlive(sourceTrail->____trailRendererPrefab.unsafePtr()) &&
+                           IsAlive(sourceTrail->____trailRenderer.unsafePtr());
+  GlobalNamespace::SaberTrailRenderer* fallbackPrefab = nullptr;
+  if (!hasOwnTrail) {
+    fallbackPrefab = IsAlive(saber) ? FindSaberTrailRendererPrefab(smc) : nullptr;
+    if (!IsAlive(fallbackPrefab)) {
+      PaperLogger.warn("Vivify saber trail: the saber has no game trail to follow and no trail renderer was found; "
+                       "the map's trail is skipped");
+      return;
+    }
+    VIVIFY_DEBUG("Vivify saber trail: controller has no game trail (another saber mod); following the saber");
+  }
   UnityEngine::Transform* parent = nullptr;
   auto existing = std::find_if(_activeSabers.begin(), _activeSabers.end(), [smc](ActiveSaberVisual const& target) {
     return target.controller == smc;
@@ -1272,7 +1351,13 @@ void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
       UnityEngine::Object::Destroy(trailObject);
       continue;
     }
-    followedTrail->InitFollowed(sourceTrail, parent, material, top, bottom, duration, samplingFrequency, granularity);
+    if (hasOwnTrail) {
+      followedTrail->InitFollowed(sourceTrail, parent, material, top, bottom, duration, samplingFrequency,
+                                  granularity);
+    } else {
+      followedTrail->InitFromSaber(saber, smc, fallbackPrefab, parent, material, GetSaberColor(smc, saber), top,
+                                   bottom, duration, samplingFrequency, granularity);
+    }
     if (!IsAlive(followedTrail->____trailRenderer.unsafePtr())) {
       UnityEngine::Object::Destroy(trailObject);
       continue;
@@ -1282,23 +1367,24 @@ void Runtime::ApplySaberTrailVisuals(GlobalNamespace::SaberModelController* smc,
   }
 
   if (!replacement.followedTrails.empty() && ShouldHideOriginal(infos)) {
-    replacement.suppressOriginalSaberTrails = true;
-    auto disableTrailRenderer = [this, &replacement](GlobalNamespace::SaberTrailRenderer* trailRenderer) {
-      if (!IsAlive(trailRenderer) || !IsAlive(trailRenderer->____meshRenderer.unsafePtr())) return;
-      auto* meshRenderer = trailRenderer->____meshRenderer.unsafePtr();
-      for (auto* followedTrail : replacement.followedTrails) {
-        if (IsAlive(followedTrail) && followedTrail->____trailRenderer.unsafePtr() == trailRenderer) return;
+    auto hide = [this, &replacement](GlobalNamespace::SaberTrail* trail) {
+      auto* renderer = IsAlive(trail) ? trail->____trailRenderer.unsafePtr() : nullptr;
+      if (IsAlive(renderer) && renderer->____meshRenderer && renderer->____meshRenderer->get_enabled()) {
+        renderer->____meshRenderer->set_enabled(false);
+        replacement.disabledRenderers.emplace_back(renderer->____meshRenderer);
       }
-      if (!meshRenderer->get_enabled()) return;
-      meshRenderer->set_enabled(false);
-      replacement.disabledRenderers.emplace_back(meshRenderer);
     };
-    auto trailRenderers =
-        smc->get_gameObject()->GetComponentsInChildren<GlobalNamespace::SaberTrailRenderer*>(true);
-    for (int i = 0; i < trailRenderers.size(); ++i) {
-      disableTrailRenderer(trailRenderers[i]);
+    if (hasOwnTrail) hide(sourceTrail);
+    // Trails another mod hangs under the saber (Custom Models puts its own
+    // under its model) would otherwise keep drawing over the map's. Their
+    // renderers sit at the scene root, so hiding the saber's renderers misses
+    // them.
+    auto trails = smc->GetComponentsInChildren<GlobalNamespace::SaberTrail*>(true);
+    for (int i = 0; trails && i < trails.size(); i++) {
+      auto* trail = trails[i];
+      if (trail == sourceTrail || il2cpp_utils::try_cast<FollowedSaberTrail>(trail).has_value()) continue;
+      hide(trail);
     }
-    disableTrailRenderer(sourceTrail->____trailRenderer.unsafePtr());
   }
 }
 

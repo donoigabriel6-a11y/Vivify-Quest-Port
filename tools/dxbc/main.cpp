@@ -89,9 +89,10 @@ int main(int argc, char** argv) {
     if (program.ok) std::cout << Vivify::Dxbc::DisassembleProgram(program);
     return 0;
   }
-  if (mode == "glsl" || mode == "glsl-mv") {
+  if (mode == "glsl" || mode == "glsl-mv" || mode == "glsl-mv-spi") {
     Vivify::Dxbc::GlslOptions options;
-    options.multiview = mode == "glsl-mv";
+    options.multiview = mode == "glsl-mv" || mode == "glsl-mv-spi";
+    options.stereoInstancedProgram = mode == "glsl-mv-spi";
     Vivify::Dxbc::GlslResult const result = Vivify::Dxbc::TranslateToGlsl(program, options);
     std::cout << "ok=" << (result.ok ? 1 : 0) << "\n";
     std::cout << "stereoInstanced=" << (result.stereoInstanced ? 1 : 0) << "\n";

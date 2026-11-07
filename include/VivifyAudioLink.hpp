@@ -21,15 +21,7 @@ namespace Vivify::AudioLink {
 // Called once per frame, in the menu and in play.
 void Tick();
 
-// Tune the AudioLink analysis shader; changes are applied immediately when it
-// is active and otherwise retained for its next load.
-void SetTuning(float gain, float bass, float treble);
-
 // Whether AudioLink has loaded and is publishing _AudioTexture.
 bool IsActive();
-
-// Call when the level ends or the audio source is known to have changed,
-// to force FindSource to search immediately on the next frame.
-void OnLevelEnd();
 
 }  // namespace Vivify::AudioLink
