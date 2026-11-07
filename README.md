@@ -115,6 +115,7 @@ If you genuinely cannot access `VivifySession.txt`, say so in the issue. Do not 
 
 
 -# personally i recommend version 0.15.3-2 nightly
+but if your having lag issues, then downgrade to 0.14.29
 
 A Quest port of [Vivify](https://github.com/Aeroluna/Vivify) for **Beat Saber
 1.40.8**. It plays Vivify maps on the headset, including maps that were only
