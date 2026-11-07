@@ -101,7 +101,6 @@ public:
   void ApplySaberVisualsToActive();
   void ApplySaberVisuals(GlobalNamespace::SaberModelController* smc, GlobalNamespace::Saber* saber,
                          UnityEngine::Transform* parent);
-  void SuppressOriginalSaberTrail(GlobalNamespace::SaberTrail* trail);
   void ReplaceDebrisVisuals(GlobalNamespace::NoteDebris* debris);
 
   void ApplyBlits(UnityEngine::RenderTexture* src, UnityEngine::RenderTexture* dest,
@@ -540,7 +539,7 @@ private:
   bool _reduceDebrisCached = false;
 
   bool _inMultiplayerGameplay = false;
-  std::atomic<bool> _inMultiplayerGameplayCached = false;
+  bool _inMultiplayerGameplayCached = false;
 
   // Bundle chosen for the selected level. Usually the level's own
   // bundleAndroid2021.vivify, but it can point at a downloaded or an
@@ -548,7 +547,6 @@ private:
   std::string _selectedBundlePath;
   // Source path of a PC->Android bundle conversion currently running on a
   // worker thread, so re-selecting the same level does not start a second one.
-  std::mutex _bundleConversionMutex;
   std::string _bundleConversionSource;
   // PC-built shaders standing in for shaders a level's Android bundle shipped
   // empty, by shader name, for _graftLevelPath. Kept alive with

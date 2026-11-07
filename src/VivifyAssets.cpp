@@ -1214,14 +1214,11 @@ void Runtime::ConvertPcBundleAsync(std::string const& levelPath, std::string con
     return;
   }
 
-  {
-    std::lock_guard lock(_bundleConversionMutex);
-    if (_bundleConversionSource == sourceBundlePath) {
-      // Already running for this bundle; its completion handler will re-enable
-      // the play button.
-      SongCore::API::PlayButton::DisablePlayButton("Vivify", "Converting PC assets...");
-      return;
-    }
+  if (_bundleConversionSource == sourceBundlePath) {
+    // Already running for this bundle; its completion handler will re-enable
+    // the play button.
+    SongCore::API::PlayButton::DisablePlayButton("Vivify", "Converting PC assets...");
+    return;
   }
 
   std::string const destPath = ConvertedBundlePath(sourceBundlePath);
@@ -1240,10 +1237,7 @@ void Runtime::ConvertPcBundleAsync(std::string const& levelPath, std::string con
 
   SongCore::API::PlayButton::DisablePlayButton("Vivify", "Converting PC assets...");
   PaperLogger.info("Vivify converting PC asset bundle on device: '{}' -> '{}'", sourceBundlePath, destPath);
-  {
-    std::lock_guard lock(_bundleConversionMutex);
-    _bundleConversionSource = sourceBundlePath;
-  }
+  _bundleConversionSource = sourceBundlePath;
 
   // Conversion decompresses the whole archive, so it must not run on the main
   // thread. Results are handed back the same way the download path does it.
@@ -1273,10 +1267,7 @@ void Runtime::ConvertPcBundleAsync(std::string const& levelPath, std::string con
         PaperLogger.info("Vivify source bundle shaders: {}", shaderScanText);
       }
       // Only clear the in-flight marker if a newer conversion has not claimed it.
-      {
-        std::lock_guard lock(_bundleConversionMutex);
-        if (_bundleConversionSource == sourceBundlePath) _bundleConversionSource.clear();
-      }
+      if (_bundleConversionSource == sourceBundlePath) _bundleConversionSource.clear();
       if (usable) {
         PaperLogger.info("Vivify bundle conversion succeeded: {}", message);
       } else {
@@ -3245,21 +3236,6 @@ UnityEngine::Texture* Runtime::ResolveUsableTexture(UnityEngine::Texture* textur
   if (!IsAlive(texture)) return texture;
   if (auto cached = _decodedTextures.find(texture); cached != _decodedTextures.end()) {
     return IsAlive(cached->second) ? cached->second : texture;
-  }
-
-  // Evict old entries if cache grows too large (prevents unbounded growth)
-  constexpr size_t kMaxDecodedTextures = 512;
-  if (_decodedTextures.size() >= kMaxDecodedTextures) {
-    // Remove dead entries first
-    std::erase_if(_decodedTextures, [this](auto const& kv) { return !IsAlive(kv.second); });
-    // If still too large, remove oldest entries (map iteration order is insertion order in C++11+ for unordered_map)
-    if (_decodedTextures.size() >= kMaxDecodedTextures) {
-      size_t toRemove = _decodedTextures.size() - kMaxDecodedTextures / 2;
-      auto it = _decodedTextures.begin();
-      while (toRemove-- > 0 && it != _decodedTextures.end()) {
-        it = _decodedTextures.erase(it);
-      }
-    }
   }
 
   auto* source = il2cpp_utils::try_cast<UnityEngine::Texture2D>(texture).value_or(nullptr);

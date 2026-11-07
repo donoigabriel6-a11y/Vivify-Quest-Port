@@ -2,25 +2,6 @@
 #include "VivifySerializedFile.hpp"
 #include "VivifyDxbc.hpp"
 
-// PaperLogger is only available in the full mod build (has scotland2 dependency).
-// For host tests, provide a no-op fallback.
-#if defined(VIVIFY_TEST_BUILD) || !__has_include(<paper2_scotland2/shared/logger.hpp>)
-namespace Paper {
-struct ConstLoggerContext {
-  constexpr ConstLoggerContext(char const*) {}
-  template<typename... Args>
-  void warn(Args&&...) const {}
-  template<typename... Args>
-  void info(Args&&...) const {}
-  template<typename... Args>
-  void error(Args&&...) const {}
-};
-}
-constexpr auto PaperLogger = Paper::ConstLoggerContext("Vivify");
-#else
-#include "main.hpp"
-#endif
-
 #include <algorithm>
 #include <map>
 #include <set>
@@ -105,7 +86,7 @@ class ByteReader {
   // rather than a silent truncation.
   std::string cstring(size_t maxLength = 4096) {
     std::string out;
-    while (out.size() < maxLength) {
+    while (out.size() <= maxLength) {
       if (remaining() < 1) {
         _ok = false;
         return out;
@@ -199,7 +180,7 @@ bool Lz4DecompressBlock(uint8_t const* src, size_t srcSize, uint8_t* dst, size_t
         uint8_t const add = src[sp++];
         literalLength += add;
         if (add != 255) break;
-        if (literalLength > dstSize - dp) return false;
+        if (literalLength > dstSize) return false;
       }
     }
     if (literalLength > srcSize - sp) return false;
@@ -223,7 +204,7 @@ bool Lz4DecompressBlock(uint8_t const* src, size_t srcSize, uint8_t* dst, size_t
         uint8_t const add = src[sp++];
         matchLength += add;
         if (add != 255) break;
-        if (matchLength > dstSize - dp) return false;
+        if (matchLength > dstSize) return false;
       }
     }
     matchLength += 4;
@@ -410,7 +391,6 @@ class LzmaDecoder {
       _code += _range & t;
       if (_code == _range) _corrupted = true;
       Normalize();
-      if (_corrupted) return 0;
       result <<= 1;
       result += t + 1;
     } while (--count);
@@ -465,7 +445,7 @@ class LzmaDecoder {
 
     unsigned symbol = 1;
     if (state >= 7) {
-      if (static_cast<uint64_t>(rep0) >= _dstPos) return false;
+      if (static_cast<uint64_t>(rep0) + 1 > _dstPos) return false;
       unsigned matchByte = _dst[_dstPos - rep0 - 1];
       do {
         unsigned const matchBit = (matchByte >> 7) & 1;
@@ -663,12 +643,6 @@ constexpr size_t kMaxHeaderScan = 512;
 // table. Leaves header.blocksStart pointing at the first storage block.
 bool ParseArchive(FileSource& source, ArchiveHeader& header, std::vector<StorageBlock>& blocks,
                   std::vector<DirectoryNode>& nodes, Result& result) {
-  // On 32-bit, size_t is 32-bit. source.size() can be larger than SIZE_MAX.
-  if (source.size() > static_cast<uint64_t>(SIZE_MAX)) {
-    result.status = Status::Corrupt;
-    result.message = "source size exceeds addressable memory";
-    return false;
-  }
   std::vector<uint8_t> head;
   if (!source.ReadAt(0, static_cast<size_t>(std::min<uint64_t>(source.size(), kMaxHeaderScan)), head)) {
     result.status = Status::SourceUnreadable;
@@ -876,13 +850,6 @@ TargetPlatformField FindTargetPlatform(uint8_t const* data, size_t dataSize, siz
   if (fileSize == 0 || fileSize > nodeSize) return field;
   if (dataOffset == 0 || dataOffset > fileSize) return field;
   if (metadataSize == 0 || metadataSize > fileSize) return field;
-  // metadataSize is a byte count beginning immediately after the SerializedFile header;
-  // dataOffset is already an absolute offset from the start of the file.
-  // Adding metadataSize to dataOffset double-counts the metadata and rejects
-  // valid SerializedFiles (including Unity 2021 bundles).
-  size_t const headerSize = reader.position();
-  if (headerSize > dataOffset || metadataSize > dataOffset - headerSize || dataOffset > fileSize ||
-      dataOffset > static_cast<uint64_t>(nodeSize)) return field;
   if (version >= 7) {
     std::string const unityVersion = reader.cstring(64);
     if (!reader.ok() || unityVersion.empty()) return field;
@@ -930,7 +897,6 @@ bool ReplaceNodeData(std::vector<DirectoryNode>& nodes, std::vector<uint8_t>& da
     if (node.offset > data.size() || node.size > data.size() - node.offset) return false;
 
     uint64_t const gap = node.offset - previousEnd;
-    if (gap > kMaxUncompressedBytes) return false;
     previousEnd = node.offset + node.size;
     rebuilt.insert(rebuilt.end(), static_cast<size_t>(gap), 0);
 
@@ -948,7 +914,7 @@ bool ReplaceNodeData(std::vector<DirectoryNode>& nodes, std::vector<uint8_t>& da
   // Anything past the last node -- Unity does not write it, but a bundle is
   // untrusted input -- is carried over rather than dropped.
   if (previousEnd < data.size()) {
-    rebuilt.insert(rebuilt.end(), data.begin() + static_cast<size_t>(previousEnd), data.end());
+    rebuilt.insert(rebuilt.end(), data.begin() + static_cast<long>(previousEnd), data.end());
   }
 
   data = std::move(rebuilt);
@@ -999,7 +965,7 @@ bool WriteConverted(std::string const& destPath, ArchiveHeader const& header,
   }
   out.insert(out.end(), blocksInfo.begin(), blocksInfo.end());
 
-  uint64_t const totalSize = static_cast<uint64_t>(out.size()) + static_cast<uint64_t>(data.size());
+  uint64_t const totalSize = static_cast<uint64_t>(out.size()) + data.size();
   for (int i = 0; i < 8; i++) {
     out[sizeFieldOffset + i] = static_cast<uint8_t>(totalSize >> (56 - 8 * i));
   }
@@ -1060,11 +1026,7 @@ bool LoadAndScan(std::string const& sourcePath, ArchiveHeader& header, std::vect
   if (!ReadBlocks(source, header, blocks, data, result)) return false;
 
   for (auto const& node : nodes) {
-    if (node.offset > data.size() || data.size() - node.offset < node.size) {
-      result.status = Status::Corrupt;
-      result.message = "node points outside archive data";
-      return false;
-    }
+    if (node.offset > data.size() || data.size() - node.offset < node.size) continue;
     auto field = FindTargetPlatform(data.data(), data.size(), static_cast<size_t>(node.offset), node.size);
     if (field.found) fields.push_back(field);
   }
@@ -1163,7 +1125,7 @@ bool TranslateShaderPrograms(std::vector<SerializedFileParse::ShaderSubProgram>&
       return false;
     }
     auto const result = Vivify::Dxbc::TranslateDxbcToGlsl(
-        program.code.data(), program.code.size());
+        program.code.empty() ? nullptr : program.code.data(), program.code.size());
     if (!result.ok) {
       reason = result.error;
       return false;
@@ -1316,23 +1278,19 @@ std::map<std::string, std::string> DeclaredVaryings(std::string const& source, s
 // is also what D3D gives a pixel shader for an input the vertex shader skipped.
 // Replaces every occurrence of identifier `from` in GLSL text with `to`; a
 // longer name that merely contains it (vs_TEXCOORD01 for vs_TEXCOORD0) stays.
-// Returns true if at least one replacement was made.
-bool RenameIdentifier(std::string& text, std::string const& from, std::string const& to) {
+void RenameIdentifier(std::string& text, std::string const& from, std::string const& to) {
   auto isName = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_'; };
   size_t at = 0;
-  bool replaced = false;
   while ((at = text.find(from, at)) != std::string::npos) {
     bool const startsWord = at == 0 || !isName(text[at - 1]);
     bool const endsWord = at + from.size() >= text.size() || !isName(text[at + from.size()]);
     if (startsWord && endsWord) {
       text.replace(at, from.size(), to);
       at += to.size();
-      replaced = true;
     } else {
       at += from.size();
     }
   }
-  return replaced;
 }
 
 std::string LinkStages(Vivify::Dxbc::GlslResult const& vertex, Vivify::Dxbc::GlslResult const* fragment,
@@ -1580,12 +1538,7 @@ LinkedShader ConvertThroughParsedForm(uint8_t const* nodeData, size_t nodeSize,
   int32_t entryCount = 0;
   for (size_t i = 0; i < decoded.programs.size(); i++) {
     if (decoded.programs[i].groupIndex != group) continue;
-    uint32_t const blobIndex = static_cast<uint32_t>(decoded.programs[i].blobIndex);
-    if (entryAt.contains(blobIndex)) {
-      out.reason = "duplicate blob index in ParsedForm";
-      return out;
-    }
-    entryAt[blobIndex] = i;
+    entryAt[static_cast<uint32_t>(decoded.programs[i].blobIndex)] = i;
     entryCount++;
   }
 

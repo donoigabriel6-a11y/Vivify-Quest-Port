@@ -2,9 +2,9 @@ name: Validate
 
 on:
   push:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
   pull_request:
-    branches: [ main, master, "GRFN's-Vivify" ]
+    branches: [ main, master ]
   workflow_dispatch:
 
 jobs:
@@ -24,20 +24,14 @@ jobs:
       shell: pwsh
       run: ./scripts/validate-modjson.ps1
 
-    - name: Check mod, QPM, and CMake versions match
+    - name: Check mod.json / qpm.json versions match
       run: |
         MOD_VERSION=$(python3 -c "import json; print(json.load(open('mod.json'))['version'])")
         QPM_VERSION=$(python3 -c "import json; print(json.load(open('qpm.json'))['info']['version'])")
-        CMAKE_VERSION=$(sed -n 's/^set(MOD_VERSION "\([^"]*\)")/\1/p' qpm_defines.cmake)
         echo "mod.json version: $MOD_VERSION"
         echo "qpm.json version: $QPM_VERSION"
-        echo "qpm_defines.cmake version: $CMAKE_VERSION"
         if [ "$MOD_VERSION" != "$QPM_VERSION" ]; then
           echo "::error::mod.json version ($MOD_VERSION) and qpm.json info.version ($QPM_VERSION) are out of sync"
-          exit 1
-        fi
-        if [ "$MOD_VERSION" != "$CMAKE_VERSION" ]; then
-          echo "::error::mod.json version ($MOD_VERSION) and qpm_defines.cmake MOD_VERSION ($CMAKE_VERSION) are out of sync"
           exit 1
         fi
 

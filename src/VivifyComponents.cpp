@@ -151,6 +151,7 @@ void FollowedSaberTrail::Setup(GlobalNamespace::IBladeMovementData* movementData
     trailRenderer->____meshRenderer->set_material(material);
   }
 
+  Init();
   Update();
   auto gameObject = get_gameObject();
   if (IsManagedAlive(gameObject.unsafePtr())) {

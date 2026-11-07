@@ -4,7 +4,6 @@
 #include <chrono>
 #include <algorithm>
 #include "VivifyComponents.hpp"
-#include "VivifyAudioLink.hpp"
 #include "UnityEngine/ParticleSystem.hpp"
 #include "GlobalNamespace/PlayerDataModel.hpp"
 #include "GlobalNamespace/PlayerData.hpp"
@@ -47,10 +46,10 @@ bool Runtime::IsMultiplayerModLoaded() const {
 // signal. The lookup is cached for the lifetime of a beatmap (ResetRuntime
 // clears it) so this stays off the per-note/per-frame path.
 bool Runtime::IsInMultiplayerGameplay() {
-  if (!_inMultiplayerGameplayCached.load(std::memory_order_acquire)) {
+  if (!_inMultiplayerGameplayCached) {
+    _inMultiplayerGameplayCached = true;
     auto* controller = UnityEngine::Object::FindObjectOfType<GlobalNamespace::MultiplayerController*>();
     _inMultiplayerGameplay = IsManagedAlive(controller);
-    _inMultiplayerGameplayCached.store(true, std::memory_order_release);
     VIVIFY_DEBUG("Vivify multiplayer check: inMultiplayerGameplay={} multiplayerModLoaded={}",
                  BoolText(_inMultiplayerGameplay), BoolText(IsMultiplayerModLoaded()));
   }
@@ -104,10 +103,6 @@ void Runtime::EnsureBehaviour() {
   auto* gameObject = UnityEngine::GameObject::New_ctor(u"VivifyRuntime");
   UnityEngine::Object::DontDestroyOnLoad(gameObject);
   _behaviour = gameObject->AddComponent<RuntimeBehaviour*>();
-  if (!_behaviour) {
-    PaperLogger.error("Failed to add RuntimeBehaviour component");
-    UnityEngine::Object::Destroy(gameObject);
-  }
   RefreshCameraComponents(false);
 }
 
@@ -429,7 +424,7 @@ bool Runtime::IsReduceDebrisEnabled() {
 
 void Runtime::SetPauseMenuActive(bool active) {
   if (_currentBeatmapData == nullptr) {
-    // Pause menu not applicable outside gameplay; ignore
+    _pauseMenuActive = false;
     return;
   }
   if (_pauseMenuActive == active) return;
@@ -487,7 +482,7 @@ void Runtime::SetPauseMenuActive(bool active) {
 void Runtime::RefreshMultipassRendering() {
   auto mainCam = UnityEngine::Camera::get_main();
   auto mainCamGO = IsAlive(mainCam.unsafePtr()) ? mainCam->get_gameObject().unsafePtr() : nullptr;
-  if (mainCamGO) RefreshMultipassRendering(mainCamGO);
+  RefreshMultipassRendering(mainCamGO);
   RefreshLoadedMaterialStereoKeywords();
 }
 
@@ -568,9 +563,6 @@ void Runtime::ResetRuntime(std::string_view reason) {
     WriteLevelEndReport(outcome);
     step("report written");
   }
-
-  // Notify AudioLink that the level ended so it can re-acquire the audio source.
-  Vivify::AudioLink::OnLevelEnd();
 
   VIVIFY_DEBUG("Vivify ResetRuntime: livePrefabs={} preloaded={} synced={} secondaryCameras={} declaredTextures={} assets={}",
                _livePrefabs.size(), _instantiatePrefabs.size(), _syncedObjects.size(),
@@ -679,7 +671,7 @@ void Runtime::ResetRuntime(std::string_view reason) {
   _pauseMenuActive = false;
   _reduceDebrisCached = false;
   _reduceDebris = false;
-  _inMultiplayerGameplayCached.store(false, std::memory_order_relaxed);
+  _inMultiplayerGameplayCached = false;
   _inMultiplayerGameplay = false;
   _isResetting = false;
   step("done");

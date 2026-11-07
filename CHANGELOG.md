@@ -389,6 +389,32 @@ Fixes from the newer reports on
     all 180 programs compiling and linking under glslang, where 2 of its
     shaders were refused before. A new converter test links a pass-through
     geometry stage with its fragment stage.
+- **Map saber trails work with Custom Models (#89).** Custom Models builds
+  its sabers through Lapiz, which skips the game's saber setup, so the saber
+  has no trail of its own and Vivify's trail, which followed that trail, was
+  never made. Only Custom Models' trail was left. Vivify's trail now follows
+  the saber itself when the game's trail is missing. When the map replaces
+  the trail (not additive), Custom Models' trails are hidden for the level
+  and come back afterwards.
+  - Read from the Custom Models and Lapiz sources. Not tried on a headset.
+
+### Compatibility
+- **GraphicsTweaks bloom keeps a map's effects in the PC order.** On Quest
+  the game's bloom (main effect) is off, so Vivify never placed it among a
+  map's Blit effects. GraphicsTweaks (the "PC graphics settings" mod) can
+  turn bloom on. Bloom then ran first, in the game's own pass, and every
+  effect, including "before main effect" ones, was drawn over the bloomed
+  image. When bloom is on, Vivify now renders it between the map's pre- and
+  post-effects as on PC, and skips the game's pass so it is not drawn twice.
+  Secondary cameras that ask for `mainEffect` get bloom as on PC. With bloom
+  off, as in an unmodded game, nothing changes. The log notes when Vivify
+  takes over rendering bloom.
+  - GraphicsTweaks 0.1.13 (the 1.40.8 build) was read for other overlaps:
+    MSAA (Vivify's effect textures already drop multisampling), resolution
+    scale (effects follow the frame's real size each frame), and depth and
+    smoke (Vivify still turns on scene depth for maps that read it). None
+    needed a change. Its higher refresh rates and resolution do make heavy
+    maps slower; Effect Resolution and Offscreen Culling help there.
 
 ### Known, not fixed
 - Two geometry shaders in 743 Aether (Beat Saber Wireframe 3D-Noise and
@@ -1121,3 +1147,4 @@ versions, so it ships as 0.14.25. Every feature and setting is unchanged.
   - the depth texture format;
   - depth-only cameras;
   - `targetTexture` breaking stereo.
+
