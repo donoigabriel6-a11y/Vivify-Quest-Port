@@ -328,7 +328,7 @@ including a glslang compile of every translated program.
 - users who made issues 
 
 ### **Special thanks to:**
--  ProgrammingEnthusiast78/Fenzo: for quick bug reporting, with detailed explanations
+-  ![FenzoBendo](https://github.com/FenzoBendo): for quick bug reporting, with detailed explanations
 
 
 
